@@ -1,0 +1,9 @@
+**/*data*/**
+**/__pycache__/**
+/server/__pycache__/**
+**/.DS_Store/**
+**/obs_agent/** 
+**/obs_agents/**
+**/tmp/**
+./cal_machine_data/**
+**/old_server_model/**
