@@ -57,6 +57,7 @@ class Human(mesa.Agent):
         self.add_file_name = add_file_name #保存するファイル名(の基礎.最終的には絶対パスまたは相対パスができる)
         #####################
         self.re_route_state = re_route_state #再探索の状態を保存する変数(selected_first_subgoalで呼び出すので先に定義しておく必要がある)
+        self.rng = model.make_agent_rng(unique_id) #(将来的に)ランダムな要素を入れるためかもしれないため設定
         self.set_up_initial_route() #最初の目的地と経路を選択
         self.route_idx = route_idx #経路のインデックス
         self.tmp_pos = np.array((0., 0.)) #一時的に計算した結果の位置を保存する値(将来的には壁を乗り越えるなどのありえない挙動をした時に元の位置に戻すために一旦計算した位置を保存している)
@@ -65,7 +66,6 @@ class Human(mesa.Agent):
         self.pos_array.append(self.pos)
         self.elapsed_time = elapsed_time #経過時間
         self.last_reroute_time = -10**9  # 最後に再探索した時間を保存する変数
-        self.rng = model.make_agent_rng(unique_id) #(将来的に)ランダムな要素を入れるためかもしれないため設定
         self.aim_pos = None # scatter-dest: 分散目的地
         ######################
 
@@ -185,7 +185,8 @@ class Human(mesa.Agent):
         for i in range(len(self.model.dead_wall_ab)):
             dist, _ = self.dead_distance_point_to_segment(i)
             if dist < DETECT_R:
-                self.re_route_state = RouteState.KNOWN
+                self.re_route_state = RouteState.KNOWN #######
+                self.m = 1000.
                 # 不通を考慮した距離木で再ルート
                 self.route, self.dest = self.model.select_first_subgoal(self)
                 self.route_idx = 0

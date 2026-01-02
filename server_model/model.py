@@ -307,7 +307,7 @@ class MoveAgent(mesa.Model):
 
     # scatter-dest
     def generate_scatter_destination(self, pos, node_pos, walls_for_los, rng=None,
-                                     base_delta=1.0, base_radius=1.0, max_trials=4):
+                                     base_delta=1.0, base_radius=1.5, max_trials=4): ########
         rng = rng or np.random.default_rng()
         dir_vec = np.array(node_pos) - np.array(pos)
         norm = np.linalg.norm(dir_vec)
