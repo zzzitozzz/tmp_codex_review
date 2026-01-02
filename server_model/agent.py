@@ -66,6 +66,7 @@ class Human(mesa.Agent):
         self.elapsed_time = elapsed_time #経過時間
         self.last_reroute_time = -10**9  # 最後に再探索した時間を保存する変数
         self.rng = model.make_agent_rng(unique_id) #(将来的に)ランダムな要素を入れるためかもしれないため設定
+        self.aim_pos = None # scatter-dest: 分散目的地
         ######################
 
     @property
@@ -75,15 +76,32 @@ class Human(mesa.Agent):
     @property
     def cur_dest(self):
         return self.model.dests[self.route[self.route_idx]]
+
+    # scatter-dest
+    def get_target_pos(self):
+        return self.aim_pos if self.aim_pos is not None else self.cur_dest
+
+    # scatter-dest
+    def update_aim_pos_from_route(self):
+        node_pos = self.cur_dest
+        walls_for_los = self.model.get_walls_for_los(self.re_route_state)
+        self.aim_pos = self.model.generate_scatter_destination(
+            self.pos, node_pos, walls_for_los, rng=self.rng)
+        if getattr(self.model, "debug_scatter_dest", False):
+            print(f"[scatter-dest] id={self.unique_id} idx={self.route_idx} "
+                  f"node={self.route[self.route_idx]} node_pos={node_pos} "
+                  f"aim={self.aim_pos} state={self.re_route_state.name}")
+        return self.aim_pos
     
     def set_up_initial_route(self):
         self.route, self.dest = self.model.select_first_subgoal(self)
         self.route_idx = 0
+        self.update_aim_pos_from_route() # scatter-dest
         return None
     
     def step(self):  # 次の位置を特定するための計算式を書く
         self._calculate()
-        dest_dis = self.space.get_distance(self.pos, self.cur_dest)
+        dest_dis = self.space.get_distance(self.pos, self.get_target_pos()) # scatter-dest
         self.goal_check(dest_dis)
         self.tmp_pos[0] = self.pos[0] + \
             self.velocity[0] * self._shared.dt  # 仮の位置を計算
@@ -122,6 +140,7 @@ class Human(mesa.Agent):
                 self.velocity = [0.0, 0.0]
             else:
                 self.route_idx += 1
+                self.update_aim_pos_from_route() # scatter-dest
                 return None
             return None
 
@@ -155,6 +174,7 @@ class Human(mesa.Agent):
         if moved < D_MIN:
             self.route, self.dest = self.model.select_first_subgoal(self)
             self.route_idx = 0
+            self.update_aim_pos_from_route() # scatter-dest
             self.last_reroute_time = self.elapsed_time
         return None
 
@@ -169,6 +189,7 @@ class Human(mesa.Agent):
                 # 不通を考慮した距離木で再ルート
                 self.route, self.dest = self.model.select_first_subgoal(self)
                 self.route_idx = 0
+                self.update_aim_pos_from_route() # scatter-dest
                 return True
         return False
 
@@ -335,7 +356,7 @@ class Human(mesa.Agent):
         return fx, fy
     
     def _calculate(self):
-        fx, fy = self._force(self.cur_dest)
+        fx, fy = self._force(self.get_target_pos()) # scatter-dest
         self.velocity[0] += fx * self._shared.dt
         self.velocity[1] += fy * self._shared.dt
         if (np.linalg.norm(self.velocity, 2) > 1.):  # review
@@ -422,7 +443,7 @@ class ForcefulHuman(Human):
 
     def step(self):  # 次の位置を特定するための計算式を書く
         self._calculate()
-        dest_dis = self.space.get_distance(self.pos, self.cur_dest)
+        dest_dis = self.space.get_distance(self.pos, self.get_target_pos()) # scatter-dest
         self.goal_check(dest_dis)
         self.tmp_pos[0] = self.pos[0] + \
             self.velocity[0] * self._shared.dt  # 仮の位置を計算

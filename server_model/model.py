@@ -297,19 +297,46 @@ class MoveAgent(mesa.Model):
                 return False
         return True
 
+    # scatter-dest
+    def get_walls_for_los(self, state):
+        if state == RouteState.NORMAL:
+            return self.wall_arr
+        elif state in (RouteState.BLOCKED_WAIT, RouteState.KNOWN):
+            return np.concatenate([self.wall_arr, self.dead_wall_arr], axis=0)
+        return self.wall_arr
+
+    # scatter-dest
+    def generate_scatter_destination(self, pos, node_pos, walls_for_los, rng=None,
+                                     base_delta=1.0, base_radius=1.0, max_trials=4):
+        rng = rng or np.random.default_rng()
+        dir_vec = np.array(node_pos) - np.array(pos)
+        norm = np.linalg.norm(dir_vec)
+        if norm < 1e-8:
+            return np.array(node_pos)
+        dir_vec = dir_vec / norm
+        perp = np.array([-dir_vec[1], dir_vec[0]])
+        delta = base_delta
+        radius = base_radius
+        for _ in range(max_trials):
+            eps = rng.uniform(-radius, radius)
+            cand = np.array(node_pos) + delta * dir_vec + eps * perp
+            if self.has_line_of_sight(pos, cand, walls_for_los):
+                return cand
+            delta *= 0.5
+            radius *= 0.5
+        return np.array(node_pos)
+
     def select_first_subgoal(self, agent):
         if agent.re_route_state == RouteState.NORMAL:
             dist_to_goal =  self.dist_to_goal_normal
             next_to_goal = self.next_to_goal_normal
-            walls_for_los = self.wall_arr
         elif agent.re_route_state == RouteState.BLOCKED_WAIT:
             dist_to_goal =  self.dist_to_goal_blocked
             next_to_goal = self.next_to_goal_blocked
-            walls_for_los = np.concatenate([self.wall_arr, self.dead_wall_arr], axis=0)
         elif agent.re_route_state == RouteState.KNOWN:
             dist_to_goal =  self.dist_to_goal_blocked
             next_to_goal = self.next_to_goal_blocked
-            walls_for_los = np.concatenate([self.wall_arr, self.dead_wall_arr], axis=0)
+        walls_for_los = self.get_walls_for_los(agent.re_route_state)
         tmp_cost = 999999
         tmp_idx = 0
         for idx, dis in enumerate(dist_to_goal):
@@ -413,4 +440,3 @@ class MoveAgent(mesa.Model):
         else:
             with open(f"{self.add_file_name}/Data/forceful.dat", "a") as f:
                 f.write(f"interrupt\n")
-
