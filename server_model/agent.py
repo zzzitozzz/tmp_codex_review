@@ -79,6 +79,7 @@ class Human(mesa.Agent):
         self.elapsed_time = elapsed_time #経過時間
         self.last_reroute_time = -10**9  # 最後に再探索した時間を保存する変数
         self.aim_pos = None # scatter-dest: 分散目的地
+        self._needs_reroute_from_share = False
         ######################
 
     @property
@@ -112,6 +113,12 @@ class Human(mesa.Agent):
         return None
     
     def step(self):  # 次の位置を特定するための計算式を書く
+        if self._needs_reroute_from_share:
+            self.route, self.dest = self.model.select_first_subgoal(self)
+            self.route_idx = 0
+            self.update_aim_pos_from_route() # scatter-dest
+            self.last_reroute_time = self.elapsed_time
+            self._needs_reroute_from_share = False
         self._calculate()
         dest_dis = self.space.get_distance(self.pos, self.get_target_pos()) # scatter-dest
         self.goal_check(dest_dis)
@@ -227,6 +234,7 @@ class Human(mesa.Agent):
             self.block_info_state = BlockInfoState.KNOWN
             if self.re_route_state == RouteState.NORMAL:
                 self.re_route_state = RouteState.KNOWN
+            self._needs_reroute_from_share = True
 
     def make_dir(self, path):
         os.makedirs(f"{path}/Data", exist_ok=True)
