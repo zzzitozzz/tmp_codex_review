@@ -11,7 +11,7 @@ import yaml
 import heapq
 import math
 
-from agent import SharedParams, Human, HumanSpecs, ForcefulHuman, ForcefulHumanSpecs, Wall, RouteState
+from agent import SharedParams, Human, HumanSpecs, ForcefulHuman, ForcefulHumanSpecs, Wall, RouteState, InfoShareMode, BlockInfoState
 warnings.simplefilter('ignore', UserWarning)
 
 
@@ -25,7 +25,8 @@ class MoveAgent(mesa.Model):
             in_dest_d=3, vision=3, time_step=0,
             add_file_name="", add_file_name_arr=[],
             len_sq=3., f_r=0.,pos_func= {},
-            csv_plot=False):
+            csv_plot=False,
+            info_share_mode=InfoShareMode.NO_SHARE):
         super().__init__()
         self.population = population
         self.for_population = for_population
@@ -59,6 +60,7 @@ class MoveAgent(mesa.Model):
         self.pos_func = pos_func
         ###
         self.csv_plot = csv_plot
+        self.info_share_mode = info_share_mode
         shared, human_var_inst, forceful_human_var_inst = self.assign_ini_human_and_forceful_human_var()
         self.dist_to_goal_normal = [] # dist_to_goal[i]: ノード i から避難所までの最短距離 (A* の g(n) に相当)
         self.next_to_goal_normal = [] # next_to_goal[i]: ノード i から避難所までの最短経路 (A* の f(n) に相当)
@@ -326,16 +328,7 @@ class MoveAgent(mesa.Model):
             radius *= 0.5
         return np.array(node_pos)
 
-    def select_first_subgoal(self, agent):
-        if agent.re_route_state == RouteState.NORMAL:
-            dist_to_goal =  self.dist_to_goal_normal
-            next_to_goal = self.next_to_goal_normal
-        elif agent.re_route_state == RouteState.BLOCKED_WAIT:
-            dist_to_goal =  self.dist_to_goal_blocked
-            next_to_goal = self.next_to_goal_blocked
-        elif agent.re_route_state == RouteState.KNOWN:
-            dist_to_goal =  self.dist_to_goal_blocked
-            next_to_goal = self.next_to_goal_blocked
+    def select_first_subgoal_with_dist(self, agent, dist_to_goal, next_to_goal):
         walls_for_los = self.get_walls_for_los(agent.re_route_state)
         tmp_cost = 999999
         tmp_idx = 0
@@ -352,6 +345,24 @@ class MoveAgent(mesa.Model):
         route = tmp_path_arr2
         dest = route[0]
         return route, dest
+
+    def select_first_subgoal(self, agent):
+        if self.info_share_mode == InfoShareMode.SHARE_BLOCKED_ROAD and agent.block_info_state == BlockInfoState.KNOWN:
+            dist_to_goal = self.dist_to_goal_blocked
+            next_to_goal = self.next_to_goal_blocked
+        elif agent.re_route_state == RouteState.NORMAL:
+            dist_to_goal =  self.dist_to_goal_normal
+            next_to_goal = self.next_to_goal_normal
+        elif agent.re_route_state == RouteState.BLOCKED_WAIT:
+            dist_to_goal =  self.dist_to_goal_blocked
+            next_to_goal = self.next_to_goal_blocked
+        elif agent.re_route_state == RouteState.KNOWN:
+            dist_to_goal =  self.dist_to_goal_blocked
+            next_to_goal = self.next_to_goal_blocked
+        else:
+            dist_to_goal = self.dist_to_goal_normal
+            next_to_goal = self.next_to_goal_normal
+        return self.select_first_subgoal_with_dist(agent, dist_to_goal, next_to_goal)
 
     def pre_wall_arr(self, wall_arr):
         wall_a = wall_arr[:, 0]           # 各壁の始点 (N_wall, 2)
@@ -397,7 +408,21 @@ class MoveAgent(mesa.Model):
         return count
 
     def step(self):
+        # Phase 1: 行動
         self.schedule.step()
+
+        # Phase 2: 共有
+        if self.info_share_mode == InfoShareMode.SHARE_BLOCKED_ROAD:
+            for agent in list(self.schedule.agents):
+                if isinstance(agent, (Human, ForcefulHuman)):
+                    agent.share_block_info()
+
+        # Phase 3: 状態更新
+        if self.info_share_mode == InfoShareMode.SHARE_BLOCKED_ROAD:
+            for agent in list(self.schedule.agents):
+                if isinstance(agent, (Human, ForcefulHuman)):
+                    agent.update_block_info_state()
+
         self.time_step += 1
         if self.time_step % 100 == 0:
             if self.all_agent_evacuate():

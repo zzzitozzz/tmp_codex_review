@@ -13,6 +13,17 @@ class RouteState(Enum):
     KNOWN = auto() #　不通道路をすでに知っている：再探索を許可
     INFORM = auto() #　不通道路情報を他の人に与える
 
+
+class InfoShareMode(Enum):
+    NO_SHARE = auto()
+    SHARE_BLOCKED_ROAD = auto()
+
+
+class BlockInfoState(Enum):
+    UNKNOWN = auto()
+    PENDING = auto()
+    KNOWN = auto()
+
 class SharedParams:
     "_shared: Common human-related parameters shared between Human and ForcefulHuman instances."
     def __init__(self, in_dest_d, vision, dt):
@@ -67,6 +78,7 @@ class Human(mesa.Agent):
         self.last_reroute_time = -10**9  # 最後に再探索した時間を保存する変数
         self.rng = model.make_agent_rng(unique_id) #(将来的に)ランダムな要素を入れるためかもしれないため設定
         self.aim_pos = None # scatter-dest: 分散目的地
+        self.block_info_state = BlockInfoState.UNKNOWN
         ######################
 
     @property
@@ -186,12 +198,35 @@ class Human(mesa.Agent):
             dist, _ = self.dead_distance_point_to_segment(i)
             if dist < DETECT_R:
                 self.re_route_state = RouteState.KNOWN
+                self.block_info_state = BlockInfoState.KNOWN
                 # 不通を考慮した距離木で再ルート
                 self.route, self.dest = self.model.select_first_subgoal(self)
                 self.route_idx = 0
                 self.update_aim_pos_from_route() # scatter-dest
                 return True
         return False
+
+    def share_block_info(self):
+        if self.model.info_share_mode != InfoShareMode.SHARE_BLOCKED_ROAD:
+            return None
+        if self.block_info_state != BlockInfoState.KNOWN:
+            return None
+        neighbors = self.model.space.get_neighbors(self.pos, 1.5, False)
+        for neighbor in neighbors:
+            if self.unique_id == neighbor.unique_id:
+                continue
+            if isinstance(neighbor, (Human, ForcefulHuman)):
+                if neighbor.block_info_state == BlockInfoState.UNKNOWN:
+                    neighbor.block_info_state = BlockInfoState.PENDING
+        return None
+
+    def update_block_info_state(self):
+        if self.model.info_share_mode != InfoShareMode.SHARE_BLOCKED_ROAD:
+            return None
+        if self.block_info_state == BlockInfoState.PENDING:
+            self.block_info_state = BlockInfoState.KNOWN
+            if self.re_route_state == RouteState.NORMAL:
+                self.re_route_state = RouteState.KNOWN
 
     def make_dir(self, path):
         os.makedirs(f"{path}/Data", exist_ok=True)
