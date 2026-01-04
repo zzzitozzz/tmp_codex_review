@@ -13,6 +13,17 @@ class RouteState(Enum):
     KNOWN = auto() #　不通道路をすでに知っている：再探索を許可
     INFORM = auto() #　不通道路情報を他の人に与える
 
+
+class InfoShareMode(Enum):
+    NO_SHARE = auto()
+    SHARE_BLOCKED_ROAD = auto()
+
+
+class BlockInfoState(Enum):
+    UNKNOWN = auto()
+    PENDING = auto()
+    KNOWN = auto()
+
 class SharedParams:
     "_shared: Common human-related parameters shared between Human and ForcefulHuman instances."
     def __init__(self, in_dest_d, vision, dt):
@@ -58,6 +69,7 @@ class Human(mesa.Agent):
         #####################
         self.re_route_state = re_route_state #再探索の状態を保存する変数(selected_first_subgoalで呼び出すので先に定義しておく必要がある)
         self.rng = model.make_agent_rng(unique_id) #(将来的に)ランダムな要素を入れるためかもしれないため設定
+        self.block_info_state = BlockInfoState.UNKNOWN
         self.set_up_initial_route() #最初の目的地と経路を選択
         self.route_idx = route_idx #経路のインデックス
         self.tmp_pos = np.array((0., 0.)) #一時的に計算した結果の位置を保存する値(将来的には壁を乗り越えるなどのありえない挙動をした時に元の位置に戻すために一旦計算した位置を保存している)
@@ -185,14 +197,36 @@ class Human(mesa.Agent):
         for i in range(len(self.model.dead_wall_ab)):
             dist, _ = self.dead_distance_point_to_segment(i)
             if dist < DETECT_R:
-                self.re_route_state = RouteState.KNOWN #######
-                self.m = 1000.
+                self.re_route_state = RouteState.KNOWN
+                self.block_info_state = BlockInfoState.KNOWN
                 # 不通を考慮した距離木で再ルート
                 self.route, self.dest = self.model.select_first_subgoal(self)
                 self.route_idx = 0
                 self.update_aim_pos_from_route() # scatter-dest
                 return True
         return False
+
+    def share_block_info(self):
+        if self.model.info_share_mode != InfoShareMode.SHARE_BLOCKED_ROAD:
+            return None
+        if self.block_info_state != BlockInfoState.KNOWN:
+            return None
+        neighbors = self.model.space.get_neighbors(self.pos, 1.5, False)
+        for neighbor in neighbors:
+            if self.unique_id == neighbor.unique_id:
+                continue
+            if isinstance(neighbor, (Human, ForcefulHuman)):
+                if neighbor.block_info_state == BlockInfoState.UNKNOWN:
+                    neighbor.block_info_state = BlockInfoState.PENDING
+        return None
+
+    def update_block_info_state(self):
+        if self.model.info_share_mode != InfoShareMode.SHARE_BLOCKED_ROAD:
+            return None
+        if self.block_info_state == BlockInfoState.PENDING:
+            self.block_info_state = BlockInfoState.KNOWN
+            if self.re_route_state == RouteState.NORMAL:
+                self.re_route_state = RouteState.KNOWN
 
     def make_dir(self, path):
         os.makedirs(f"{path}/Data", exist_ok=True)
