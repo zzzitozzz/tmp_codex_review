@@ -9,6 +9,8 @@ def load_agent_csv(path):
     data = np.atleast_2d(np.loadtxt(path, delimiter=","))
     pos_array = data[:, :2]
     state_array = data[:, 2].astype(int) if data.shape[1] >= 3 else None
+    if len(pos_array) > 0 and not np.all(np.isfinite(pos_array[0])):
+        raise ValueError(f"Non-finite initial position detected in {path}: {pos_array[0]}")
     return pos_array, state_array
 
 

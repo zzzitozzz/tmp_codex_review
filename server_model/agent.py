@@ -133,6 +133,7 @@ class Human(mesa.Agent):
         self.elapsed_time += self._shared.dt
         self.re_route()
         if (self.in_goal):  # goalした場合
+            self.model.mark_goal_reached(self)
             path = self.add_file_name
             self.make_dir(path)
             self.write_record(path)

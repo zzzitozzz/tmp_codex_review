@@ -62,11 +62,13 @@ class MoveAgent(mesa.Model):
         self.csv_plot = csv_plot
         self.info_share_mode = info_share_mode
         self.max_steps = 1500
+        self.log_capacity = self.max_steps + 1
         self.num_agents = self.population + self.for_population
         self.pos_log = np.zeros(
-            (self.max_steps, self.num_agents, 2), dtype=np.float32)
+            (self.log_capacity, self.num_agents, 2), dtype=np.float32)
         self.state_log = np.zeros(
-            (self.max_steps, self.num_agents), dtype=np.int8)
+            (self.log_capacity, self.num_agents), dtype=np.int8)
+        self.goal_reached_step = np.full(self.num_agents, -1, dtype=np.int32)
         shared, human_var_inst, forceful_human_var_inst = self.assign_ini_human_and_forceful_human_var()
         self.dist_to_goal_normal = [] # dist_to_goal[i]: ノード i から避難所までの最短距離 (A* の g(n) に相当)
         self.next_to_goal_normal = [] # next_to_goal[i]: ノード i から避難所までの最短経路 (A* の f(n) に相当)
@@ -79,6 +81,7 @@ class MoveAgent(mesa.Model):
         self.space = mesa.space.ContinuousSpace(width, height, True)
         self.rng = np.random.default_rng(self.seed)
         self.make_agents(shared, human_var_inst, forceful_human_var_inst)
+        self.log_initial_state()
         self.running = True
         print(f"change para: {self.check_f_parameter()}")
         self.make_basic_dir()
@@ -160,7 +163,12 @@ class MoveAgent(mesa.Model):
             velocity = []
             if tmp_forceful_num:  # 強引な人(強引な人の位置が先に決まったのち通常の避難者の位置が決まる)
                 velocity = self.decide_vel()
-                pos = self.pos_func.decide_forceful_position(self.r, self.f_r, human_array)
+                try:
+                    pos = self.pos_func.decide_forceful_position(self.rng, self.r, self.f_r, human_array)
+                except TypeError:
+                    pos = self.pos_func.decide_forceful_position(self.r, self.f_r, human_array)
+                if not np.all(np.isfinite(pos)):
+                    raise ValueError(f"Non-finite forceful position generated for id {i}: {pos}")
                 route = copy.copy(self.decide_dest())
                 dest = route[0]
                 human = ForcefulHuman(i, self, pos, velocity,
@@ -176,6 +184,8 @@ class MoveAgent(mesa.Model):
                 tmp_forceful_num -= 1
             else:  # 通常の人
                 pos = self.pos_func.decide_position(self.rng, self.r, self.f_r, human_array) #tmp
+                if not np.all(np.isfinite(pos)):
+                    raise ValueError(f"Non-finite initial position generated for id {i}: {pos}")
                 velocity = self.decide_vel()
                 human = Human(i, self, pos, velocity,
                               tmp_div, shared,
@@ -414,25 +424,64 @@ class MoveAgent(mesa.Model):
             count += 1
         return count
 
-    def log_positions(self):
-        if not (0 <= self.time_step < self.max_steps):
+    def _should_log_agent(self, agent, step_idx):
+        goal_step = self.goal_reached_step[agent.unique_id]
+        return goal_step == -1 or step_idx <= goal_step
+
+    def validate_initial_positions(self):
+        for agent in self.all_agents:
+            pos_arr = np.asarray(agent.pos, dtype=float)
+            if not np.all(np.isfinite(pos_arr)):
+                raise ValueError(f"Non-finite initial position detected for id {agent.unique_id}: {agent.pos}")
+            if not (0 <= agent.unique_id < self.num_agents):
+                raise ValueError(f"Agent id {agent.unique_id} is out of logging range (num_agents={self.num_agents})")
+
+    def log_initial_state(self):
+        if not self.csv_plot:
+            return None
+        self.validate_initial_positions()
+        self.log_positions(step_idx=0)
+        self.log_states(step_idx=0)
+
+    def log_positions(self, step_idx=None):
+        idx = self.time_step if step_idx is None else step_idx
+        if not (0 <= idx < self.log_capacity):
             return None
         for agent in self.all_agents:
-            self.pos_log[self.time_step, agent.unique_id, :] = agent.pos
+            if not self._should_log_agent(agent, idx):
+                continue
+            if agent.pos is None:
+                goal_step = self.goal_reached_step[agent.unique_id]
+                if goal_step != -1 and idx == goal_step:
+                    continue
+            pos_arr = np.asarray(agent.pos, dtype=float)
+            if not np.all(np.isfinite(pos_arr)):
+                raise ValueError(f"Non-finite position logged for id {agent.unique_id} at step {idx}: {agent.pos}")
+            self.pos_log[idx, agent.unique_id, :] = pos_arr
         return None
 
-    def log_states(self):
-        if not (0 <= self.time_step < self.max_steps):
+    def log_states(self, step_idx=None):
+        idx = self.time_step if step_idx is None else step_idx
+        if not (0 <= idx < self.log_capacity):
             return None
         for agent in self.all_agents:
-            self.state_log[self.time_step, agent.unique_id] = int(agent.block_info_state)
+            if not self._should_log_agent(agent, idx):
+                continue
+            self.state_log[idx, agent.unique_id] = int(agent.block_info_state)
         return None
+
+    def mark_goal_reached(self, agent, step_idx=None):
+        idx = self.time_step + 1 if step_idx is None else step_idx
+        idx = min(idx, self.log_capacity - 1)
+        if self.goal_reached_step[agent.unique_id] == -1:
+            self.goal_reached_step[agent.unique_id] = idx
 
     def step(self):
         # Phase 1: 行動
         self.schedule.step()
+        next_step_idx = self.time_step + 1
         if self.csv_plot:
-            self.log_positions()
+            self.log_positions(step_idx=next_step_idx)
 
         # Phase 2: 共有
         if self.info_share_mode == InfoShareMode.SHARE_BLOCKED_ROAD:
@@ -440,7 +489,7 @@ class MoveAgent(mesa.Model):
                 if isinstance(agent, (Human, ForcefulHuman)):
                     agent.share_block_info()
         if self.csv_plot:
-            self.log_states()
+            self.log_states(step_idx=next_step_idx)
 
         # Phase 3: 状態更新
         if self.info_share_mode == InfoShareMode.SHARE_BLOCKED_ROAD:
@@ -448,7 +497,7 @@ class MoveAgent(mesa.Model):
                 if isinstance(agent, (Human, ForcefulHuman)):
                     agent.update_block_info_state()
 
-        self.time_step += 1
+        self.time_step = next_step_idx
         if self.time_step % 100 == 0:
             if self.all_agent_evacuate():
                 self.running = False
@@ -497,9 +546,24 @@ class MoveAgent(mesa.Model):
         os.makedirs(out_dir, exist_ok=True)
         end_step = min(self.time_step, self.max_steps)
         for agent in self.all_agents:
-            pos = self.pos_log[:end_step, agent.unique_id, :]
-            state = self.state_log[:end_step, agent.unique_id]
-            data = np.column_stack([pos, state])
+            goal_step = self.goal_reached_step[agent.unique_id]
+            last_step = goal_step if goal_step != -1 else end_step
+            last_step = min(last_step, self.log_capacity - 1)
+            if last_step < 0:
+                continue
+            pos = self.pos_log[: last_step + 1, agent.unique_id, :]
+            state = self.state_log[: last_step + 1, agent.unique_id]
+            state_to_use = state if state is not None else np.zeros(len(pos), dtype=np.int8)
+            valid_len = 0
+            for idx, (p, s) in enumerate(zip(pos, state_to_use)):
+                if goal_step != -1 and idx > last_step:
+                    break  # goal以降は出力しない
+                if not (np.all(np.isfinite(p)) and np.isfinite(s)):
+                    break
+                valid_len = idx + 1
+            if valid_len == 0:
+                continue
+            data = np.column_stack([pos[:valid_len], state_to_use[:valid_len]])
             np.savetxt(
                 os.path.join(out_dir, f"id{agent.unique_id}_normal.csv"),
                 data,
