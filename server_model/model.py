@@ -426,7 +426,7 @@ class MoveAgent(mesa.Model):
 
     def _should_log_agent(self, agent, step_idx):
         goal_step = self.goal_reached_step[agent.unique_id]
-        return goal_step == -1 or step_idx <= goal_step
+        return goal_step == -1
 
     def validate_initial_positions(self):
         for agent in self.all_agents:
@@ -448,12 +448,8 @@ class MoveAgent(mesa.Model):
         if not (0 <= idx < self.log_capacity):
             return None
         for agent in self.all_agents:
-            if not self._should_log_agent(agent, idx):
+            if not self._should_log_agent(agent, idx): #goal_stepが記録されているならskip
                 continue
-            if agent.pos is None:
-                goal_step = self.goal_reached_step[agent.unique_id]
-                if goal_step != -1 and idx == goal_step:
-                    continue
             pos_arr = np.asarray(agent.pos, dtype=float)
             if not np.all(np.isfinite(pos_arr)):
                 raise ValueError(f"Non-finite position logged for id {agent.unique_id} at step {idx}: {agent.pos}")
@@ -475,13 +471,18 @@ class MoveAgent(mesa.Model):
         idx = min(idx, self.log_capacity - 1)
         if self.goal_reached_step[agent.unique_id] == -1:
             self.goal_reached_step[agent.unique_id] = idx
+            pos_arr = np.asarray(agent.pos, dtype=float)
+            self.pos_log[idx, agent.unique_id, :] = pos_arr
+            self.state_log[idx, agent.unique_id] = int(agent.block_info_state)
+
+
 
     def step(self):
         # Phase 1: 行動
         self.schedule.step()
         next_step_idx = self.time_step + 1
         if self.csv_plot:
-            self.log_positions(step_idx=next_step_idx)
+            self.log_positions(step_idx=next_step_idx) #各避難者の位置情報を保存
 
         # Phase 2: 共有
         if self.info_share_mode == InfoShareMode.SHARE_BLOCKED_ROAD:
@@ -506,12 +507,7 @@ class MoveAgent(mesa.Model):
             self.running = False
 
     def all_agent_evacuate(self):
-        cur_pop_num = (
-            len(open(f"{self.add_file_name}/Data/normal.dat").readlines()))
-        if cur_pop_num == self.population + 1:
-            if (len(open(f"{self.add_file_name}/Data/forceful.dat").readlines())) + cur_pop_num == self.population + self.for_population + 2:
-                return True
-        return False
+        return len(self.schedule.agents) == 0
 
     def timeout_check(self):
         if self.csv_plot:
@@ -559,6 +555,9 @@ class MoveAgent(mesa.Model):
                 if goal_step != -1 and idx > last_step:
                     break  # goal以降は出力しない
                 if not (np.all(np.isfinite(p)) and np.isfinite(s)):
+                    break
+                # 未記録の初期値が 0,0 ならスキップしたい場合
+                if idx > 0 and np.allclose(p, 0.0) and s == 0:
                     break
                 valid_len = idx + 1
             if valid_len == 0:

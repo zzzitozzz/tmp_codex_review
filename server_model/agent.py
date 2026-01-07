@@ -120,7 +120,16 @@ class Human(mesa.Agent):
             self.last_reroute_time = self.elapsed_time
             self._needs_reroute_from_share = False
         self._calculate()
-        dest_dis = self.space.get_distance(self.pos, self.get_target_pos()) # scatter-dest
+        if type(self) is Human:
+            if self.route[self.route_idx] == self.model.goal_arr[0]: #最終goalなら
+                dest_dis = self.space.get_distance(self.pos, self.cur_dest) 
+            else:
+                dest_dis = self.space.get_distance(self.pos, self.get_target_pos()) # scatter-dest
+        elif type(self) is ForcefulHuman:
+            if self.route[self.route_idx] == self.model.goal_arr[1]:     
+                dest_dis = self.space.get_distance(self.pos, self.cur_dest)        
+            else:
+                dest_dis = self.space.get_distance(self.pos, self.get_target_pos()) # scatter-dest
         self.goal_check(dest_dis)
         self.tmp_pos[0] = self.pos[0] + \
             self.velocity[0] * self._shared.dt  # 仮の位置を計算
@@ -145,15 +154,6 @@ class Human(mesa.Agent):
         return None
     
     def goal_check(self, dest_dis):
-        # if dest_dis < 6.0: #tmp
-        #     if self.route[self.route_idx] == 12 and self.re_route_state == RouteState.NORMAL: # tmp不通道路(とりあえず12)
-        #         # self.re_route_state = RouteState.BLOCKED_WAIT
-        #         self.re_route_state = RouteState.KNOWN
-        #         self.set_up_initial_route()
-        #         print(f"[goal_check] tick={self.model.time_step} id={self.unique_id} "
-        #             f"cur_node={self.cur_dest} dest_dis={dest_dis:.2f} "
-        #             f"state=NORMAL -> BLOCKED_WAIT")
-        #         return None
         if dest_dis < 1.5:
             if len(self.route) == self.route_idx + 1:
                 self.in_goal = True
@@ -169,11 +169,6 @@ class Human(mesa.Agent):
         D_MIN = self.STUCK_DIST
         COOLDOWN = self.REROUTE_COOLDOWN
 
-        # BLOCKED_WAIT状態では再探索しない
-        # if self.re_route_state == RouteState.BLOCKED_WAIT:
-        #     self.re_route_state = RouteState.KNOWN
-        #     self.set_up_initial_route()
-        #     return None
         if self.re_route_state == RouteState.NORMAL:
             learned = self.maybe_learn_blocked()
             if learned:
@@ -407,36 +402,8 @@ class Human(mesa.Agent):
             v = copy.deepcopy(self.velocity)
             vn = np.linalg.norm(v)
             self.velocity = v / vn
-        # if self.unique_id == 2:
-        #     print(f"{self.pos=},{self.velocity=}\n{fx=},{fy=}")
         return None
     
-    def pos_check(self):
-        # area = [[4., 26 + self.hspecs.r], [54., 40. - self.hspecs.r],
-        #         [16. + self.hspecs.r, 4.], [22. - self.hspecs.r, 40. - self.hspecs.r]]       
-        area = [[2., 26 + self.hspecs.r], [54., 40. - self.hspecs.r],
-                [16. + self.hspecs.r, 4.], [22. - self.hspecs.r, 40. - self.hspecs.r]]     
-        area_check = False
-        i = 0
-        while 1:
-            if i >= len(area):
-                break
-            if area[i][0] <= self.tmp_pos[0] <= area[i + 1][0] and area[i][1] <= self.tmp_pos[1] <= area[i + 1][1]:
-                area_check = True
-                break
-            else:
-                i += 2
-        if area_check:
-            return True
-        else:
-            if self.tmp_pos[0] < 4. and 26. < self.tmp_pos[1] < 40.:
-                print(f"!!!!!")
-            else:
-                print(f"{self.pos=},{self.tmp_pos=}")
-            self.tmp_pos = copy.deepcopy(self.pos)
-            return False
-
-
 class ForcefulHumanSpecs:
     "_fhspecs:ForcefulHuman-related specs set used in ForcefulHuman"
     def __init__(self, f_r, f_m, f_tau, f_k, f_kappa, f_repul_h, f_repul_m):
