@@ -11,7 +11,7 @@ import yaml
 import heapq
 import math
 
-from agent import SharedParams, Human, HumanSpecs, ForcefulHuman, ForcefulHumanSpecs, Wall, RouteState, InfoShareMode, BlockInfoState
+from agent import SharedParams, Human, HumanSpecs, ForcefulHumanSpecs, Wall, RouteState, InfoShareMode, BlockInfoState
 warnings.simplefilter('ignore', UserWarning)
 
 
@@ -169,15 +169,14 @@ class MoveAgent(mesa.Model):
                     pos = self.pos_func.decide_forceful_position(self.r, self.f_r, human_array)
                 if not np.all(np.isfinite(pos)):
                     raise ValueError(f"Non-finite forceful position generated for id {i}: {pos}")
-                route = copy.copy(self.decide_dest())
-                dest = route[0]
-                human = ForcefulHuman(i, self, pos, velocity,
-                                      dest, route,
-                                      tmp_div, shared,
-                                      human_var_inst,
-                                      self.space, self.add_file_name,
-                                      forceful_human_var_inst,
-                                      )
+                human = Human(i, self, pos, velocity,
+                              tmp_div, shared,
+                              human_var_inst,
+                              self.space, self.add_file_name,
+                              forceful_initial=True,
+                              is_forceful=True,
+                              forceful_human_var_inst=forceful_human_var_inst,
+                              )
                 self.space.place_agent(human, pos)
                 self.schedule.add(human)
                 human_array.append(human)
@@ -487,7 +486,7 @@ class MoveAgent(mesa.Model):
         # Phase 2: 共有
         if self.info_share_mode == InfoShareMode.SHARE_BLOCKED_ROAD:
             for agent in list(self.schedule.agents):
-                if isinstance(agent, (Human, ForcefulHuman)):
+                if isinstance(agent, Human):
                     agent.share_block_info()
         if self.csv_plot:
             self.log_states(step_idx=next_step_idx)
@@ -495,7 +494,7 @@ class MoveAgent(mesa.Model):
         # Phase 3: 状態更新
         if self.info_share_mode == InfoShareMode.SHARE_BLOCKED_ROAD:
             for agent in list(self.schedule.agents):
-                if isinstance(agent, (Human, ForcefulHuman)):
+                if isinstance(agent, Human):
                     agent.update_block_info_state()
 
         self.time_step = next_step_idx
@@ -512,7 +511,7 @@ class MoveAgent(mesa.Model):
     def timeout_check(self):
         if self.csv_plot:
             for obj in self.schedule.agents:
-                if type(obj) is Human or type(obj) is ForcefulHuman:
+                if isinstance(obj, Human):
                     path = obj.add_file_name
                     obj.make_dir(path)
                     obj.write_record(path)

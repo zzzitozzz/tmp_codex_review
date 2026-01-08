@@ -37,10 +37,6 @@ class Human:
             self.elapsed_step += 1
 
 
-class ForcefulHuman(Human):
-    pass
-
-
 def portrayal_method(obj):
     color = "blue" if getattr(obj, "block_info_state", 0) >= 1 else "red"
     return {"Shape": "ellipse", "Color": color, "r": 0.5, "Filled": True}

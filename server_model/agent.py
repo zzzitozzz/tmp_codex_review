@@ -57,12 +57,20 @@ class Human(mesa.Agent):
                  route_idx=0, 
                  tmp_pos=(0., 0.), pos_array=[],
                  in_goal=False,elapsed_time=0.,  # 経過時間
+                 forceful_initial=False,
+                 can_become_forceful=False,
+                 is_forceful=None,
+                 forceful_human_var_inst=None,
                  ):
         super().__init__(unique_id, model)
         self.pos = np.array(pos)
         self.velocity = velocity
         self._shared = shared
         self._hspecs = human_var_inst
+        self._force_specs = forceful_human_var_inst
+        self.forceful_initial = forceful_initial
+        self.can_become_forceful = can_become_forceful
+        self.is_forceful = forceful_initial if is_forceful is None else is_forceful
         self.tmp_div = tmp_div #特定の人同士の反発力の大きさを除算もしくは乗算する値
         self.space = space #エージェントが動き回る空間を管理するモジュール
         self.add_file_name = add_file_name #保存するファイル名(の基礎.最終的には絶対パスまたは相対パスができる)
@@ -84,7 +92,7 @@ class Human(mesa.Agent):
 
     @property
     def hspecs(self):
-        return self._hspecs
+        return self._force_specs if self.is_forceful and self._force_specs is not None else self._hspecs
     
     @property
     def cur_dest(self):
@@ -120,14 +128,11 @@ class Human(mesa.Agent):
             self.last_reroute_time = self.elapsed_time
             self._needs_reroute_from_share = False
         self._calculate()
-        if type(self) is Human:
+        if self.is_forceful:
+            dest_dis = self.space.get_distance(self.pos, self.get_target_pos()) # scatter-dest
+        else:
             if self.route[self.route_idx] == self.model.goal_arr[0]: #最終goalなら
-                dest_dis = self.space.get_distance(self.pos, self.cur_dest) 
-            else:
-                dest_dis = self.space.get_distance(self.pos, self.get_target_pos()) # scatter-dest
-        elif type(self) is ForcefulHuman:
-            if self.route[self.route_idx] == self.model.goal_arr[1]:     
-                dest_dis = self.space.get_distance(self.pos, self.cur_dest)        
+                dest_dis = self.space.get_distance(self.pos, self.cur_dest)
             else:
                 dest_dis = self.space.get_distance(self.pos, self.get_target_pos()) # scatter-dest
         self.goal_check(dest_dis)
@@ -218,7 +223,7 @@ class Human(mesa.Agent):
         for neighbor in neighbors:
             if self.unique_id == neighbor.unique_id:
                 continue
-            if isinstance(neighbor, (Human, ForcefulHuman)):
+            if isinstance(neighbor, Human):
                 if neighbor.block_info_state == BlockInfoState.UNKNOWN:
                     neighbor.block_info_state = BlockInfoState.PENDING
         return None
@@ -239,13 +244,20 @@ class Human(mesa.Agent):
         return None
 
     def write_record(self, path):
+        label = "forceful" if self.is_forceful else "normal"
         if self.model.csv_plot:
-            np.savetxt(f"{path}/csv/id{self.unique_id}_normal"
+            np.savetxt(f"{path}/csv/id{self.unique_id}_{label}"
                        f".csv", self.pos_array, delimiter=",")
         if self.in_goal:
             with open(f"{self.add_file_name}/Data/"
-                      f"normal.dat", "a") as f:
+                      f"{label}.dat", "a") as f:
                 f.write(f"{self.elapsed_time} \n")
+            if self.is_forceful:
+                path = path.replace(f"/seed_{self.model.seed}", "")
+                df = pd.DataFrame({"m": [self.hspecs.m], "nol_pop": [self.model.population], "seed": [
+                    self.model.seed], "id": [self.unique_id], "elapsed_time": [self.elapsed_time]})
+                df.to_csv(f"{path}/forceful_time.csv",
+                          mode="a", header=False, index = False)
 
     def _sincos(self, x2):
         r_0 = np.sqrt((x2[0] - self.pos[0]) ** 2 + (x2[1] - self.pos[1]) ** 2)
@@ -262,7 +274,7 @@ class Human(mesa.Agent):
         for neighbor in neighbors:
             if self.unique_id == neighbor.unique_id:
                 continue
-            if type(neighbor) is Human or type(neighbor) is ForcefulHuman:
+            if isinstance(neighbor, Human):
                 tmp_fx, tmp_fy = self.force_from_human(neighbor)
                 fx += tmp_fx
                 fy += tmp_fy
@@ -414,67 +426,6 @@ class ForcefulHumanSpecs:
         self.kappa = f_kappa
         self.repul_h = f_repul_h
         self.repul_m = f_repul_m
-
-
-class ForcefulHuman(Human):
-    def __init__(self, unique_id, model,
-                 pos, velocity,
-                 tmp_div, shared,
-                 human_var_inst,
-                 space, add_file_name,
-                 forceful_human_var_inst,
-                 route_idx=0, re_route_state=RouteState.NORMAL,
-                 tmp_pos=(0., 0.),
-                 in_goal=False, pos_array=[],
-                 elapsed_time=0.,  # 経過時間
-                 _force_mode=False,
-                 ):
-        super().__init__(unique_id, model, pos,
-                         velocity, tmp_div, shared,
-                         human_var_inst,
-                         space, add_file_name,
-                         route_idx, re_route_state,
-                         tmp_pos, in_goal,  pos_array,
-                         elapsed_time,
-                         )
-        self._fhspecs = forceful_human_var_inst
-        self._force_mode = True
-
-    @property
-    def hspecs(self):
-        return self._fhspecs if self._force_mode else self._hspecs
-    
-    @property
-    def fmode(self):
-        return self._force_mode
-    
-    @fmode.setter
-    def fmode(self, val: bool):
-        self._force_mode = val
-
-    def step(self):  # 次の位置を特定するための計算式を書く
-        self._calculate()
-        dest_dis = self.space.get_distance(self.pos, self.get_target_pos()) # scatter-dest
-        self.goal_check(dest_dis)
-        self.tmp_pos[0] = self.pos[0] + \
-            self.velocity[0] * self._shared.dt  # 仮の位置を計算
-        self.tmp_pos[1] = self.pos[1] + self.velocity[1] * self._shared.dt
-        return None
-
-    def write_record(self, path):
-        if self.model.csv_plot:
-            np.savetxt(f"{path}/csv/id{self.unique_id}_"
-                       f"forceful.csv", self.pos_array, delimiter=",")
-        if self.in_goal:
-            with open(f"{self.add_file_name}/Data/"
-                      f"forceful.dat", "a") as f:
-                f.write(f"{self.elapsed_time} \n")
-            path = path.replace(f"/seed_{self.model.seed}", "")
-            df = pd.DataFrame({"m": [self.hspecs.m], "nol_pop": [self.model.population], "seed": [
-                self.model.seed], "id": [self.unique_id], "elapsed_time": [self.elapsed_time]})
-            df.to_csv(f"{path}/forceful_time.csv",
-                      mode="a", header=False, index = False)
-        return None
     
 
 class Obstacle(mesa.Agent):

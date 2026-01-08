@@ -3,7 +3,7 @@ from model import MoveAgent
 
 import numpy as np
 from dataclasses import dataclass
-from agent import SharedParams, Human, HumanSpecs, ForcefulHuman, ForcefulHumanSpecs, Wall, InfoShareMode
+from agent import SharedParams, Human, HumanSpecs, ForcefulHumanSpecs, Wall, InfoShareMode
 
 @dataclass
 class InitPosFuncs:
@@ -37,35 +37,22 @@ class InitPosFuncs:
     def human_pos_check(self, r, f_r, tmp_pos, human_array):
         for hu in human_array:
             dis = self.get_distance(tmp_pos, hu.pos)
-            if type(hu) == Human:
-                if dis < r + r:
+            if self.f_r_use and hu.is_forceful:
+                if dis < r + f_r:
                     return False
-            elif type(hu) == ForcefulHuman:
-                if self.f_r_use:
-                    if dis < r + f_r:
-                        return False
-                else:
-                    if dis < r + r:
-                        return False
+            elif dis < r + r:
+                return False
         return True
 
     def forceful_human_pos_check(self, r, f_r, tmp_pos, human_array):
         for hu in human_array:
             dis = self.get_distance(tmp_pos, hu.pos)
-            if type(hu) == Human:
-                if self.f_r_use:
-                    if dis < f_r + r:
-                        return False
-                else:
-                    if dis < r + r:
-                        return False
-            elif type(hu) == ForcefulHuman:
-                if self.f_r_use:
-                    if dis < f_r + f_r:
-                        return False
-                else:
-                    if dis < r + r:
-                        return False
+            if self.f_r_use:
+                radius_sum = f_r + (f_r if hu.is_forceful else r)
+            else:
+                radius_sum = r + r
+            if dis < radius_sum:
+                return False
                     
         return True
     
