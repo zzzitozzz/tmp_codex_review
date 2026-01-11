@@ -11,7 +11,8 @@ import yaml
 import heapq
 import math
 
-from agent import SharedParams, Human, HumanSpecs, ForcefulHumanSpecs, Wall, RouteState, InfoShareMode, BlockInfoState
+from agent import SharedParams, Human, Wall, RouteState, InfoShareMode, BlockInfoState
+from params import Trait, StrategyConfig, build_sfm_params
 warnings.simplefilter('ignore', UserWarning)
 
 
@@ -26,7 +27,9 @@ class MoveAgent(mesa.Model):
             add_file_name="", add_file_name_arr=[],
             len_sq=3., f_r=0.,pos_func= {},
             csv_plot=False,
-            info_share_mode=InfoShareMode.NO_SHARE):
+            info_share_mode=InfoShareMode.NO_SHARE,
+            forceful_preset="baseline",
+            strategy: StrategyConfig | None = None):
         super().__init__()
         self.population = population
         self.for_population = for_population
@@ -61,6 +64,8 @@ class MoveAgent(mesa.Model):
         ###
         self.csv_plot = csv_plot
         self.info_share_mode = info_share_mode
+        self.forceful_preset = forceful_preset
+        self.strategy = strategy or StrategyConfig()
         self.max_steps = 1500
         self.log_capacity = self.max_steps + 1
         self.num_agents = self.population + self.for_population
@@ -69,7 +74,15 @@ class MoveAgent(mesa.Model):
         self.state_log = np.zeros(
             (self.log_capacity, self.num_agents), dtype=np.int8)
         self.goal_reached_step = np.full(self.num_agents, -1, dtype=np.int32)
-        shared, human_var_inst, forceful_human_var_inst = self.assign_ini_human_and_forceful_human_var()
+        shared = SharedParams(self.in_dest_d, self.vision, self.dt)
+        self.agent_params_by_trait, self.pair_params_table = build_sfm_params(
+            self.human_var,
+            self.forceful_human_var,
+            self.r,
+            self.f_r,
+            self.forceful_preset,
+            self.strategy,
+        )
         self.dist_to_goal_normal = [] # dist_to_goal[i]: ノード i から避難所までの最短距離 (A* の g(n) に相当)
         self.next_to_goal_normal = [] # next_to_goal[i]: ノード i から避難所までの最短経路 (A* の f(n) に相当)
         self.dist_to_goal_blocked = [] # 不通道路版
@@ -80,12 +93,12 @@ class MoveAgent(mesa.Model):
         self.schedule = mesa.time.SimultaneousActivation(self)
         self.space = mesa.space.ContinuousSpace(width, height, True)
         self.rng = np.random.default_rng(self.seed)
-        self.make_agents(shared, human_var_inst, forceful_human_var_inst)
+        self.make_agents(shared)
         self.log_initial_state()
         self.running = True
         print(f"change para: {self.check_f_parameter()}")
         self.make_basic_dir()
-        self.save_specs_to_file(shared, human_var_inst, forceful_human_var_inst)
+        self.save_specs_to_file(shared)
 
     def dir_parts(self):
         basic_file_name = f"{self.add_file_name_arr[0]}/nol_pop_{self.population}"
@@ -93,23 +106,8 @@ class MoveAgent(mesa.Model):
         self.add_file_name = self.add_file_name + "seed_" + str(self.seed)
         return None
 
-    def assign_ini_human_and_forceful_human_var(self):
-        self.m = self.human_var["m"]
-        self.tau = self.human_var["tau"]
-        self.k = self.human_var["k"]
-        self.kappa = self.human_var["kappa"]
-        self.repul_h = self.human_var["repul_h"]
-        self.repul_m = self.human_var["repul_m"]
-        self.f_m = self.forceful_human_var["f_m"]
-        self.f_tau = self.forceful_human_var["f_tau"]
-        self.f_k = self.forceful_human_var["f_k"]
-        self.f_kappa = self.forceful_human_var["f_kappa"]
-        self.f_repul_h = self.forceful_human_var["f_repul_h"]
-        self.f_repul_m = self.forceful_human_var["f_repul_m"]
-        shared = SharedParams(self.in_dest_d, self.vision, self.dt)
-        human_var_inst = HumanSpecs(self.r, self.m, self.tau, self.k, self.kappa, self.repul_h, self.repul_m)
-        forceful_human_var_inst = ForcefulHumanSpecs(self.f_r, self.f_m, self.f_tau, self.f_k, self.f_kappa, self.f_repul_h, self.f_repul_m)
-        return shared, human_var_inst, forceful_human_var_inst
+    def get_pair_params(self, trait_i, trait_j):
+        return self.pair_params_table.get(trait_i, trait_j)
 
     def make_basic_dir(self):
         path = f"{self.add_file_name}/Data/"
@@ -122,15 +120,20 @@ class MoveAgent(mesa.Model):
         print(f"{self.add_file_name=}")
         self.ini_force_dataframe()
 
-    def save_specs_to_file(self, shared, human_specs, forceful_human_specs):
+    def save_specs_to_file(self, shared):
         path = f"{self.add_file_name}/../human_specs.yaml"
         if not os.path.exists(path):
             run_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             data = {
                 "run_time" : run_time,
                 "shared_val" : vars(shared),
-                "human": vars(human_specs),
-                "forcefulhuman": vars(forceful_human_specs)
+                "forceful_preset": self.forceful_preset,
+                "strategy": self.strategy.to_dict(),
+                "agent_params": {
+                    trait.name: vars(self.agent_params_by_trait[trait])
+                    for trait in Trait
+                },
+                "pair_params": self.pair_params_table.as_dict(),
             }
             with open(f"{path}", "w") as f:
                 yaml.dump(data, f, sort_keys=False)
@@ -144,11 +147,11 @@ class MoveAgent(mesa.Model):
                 columns=["m", "nol_pop", "seed", "id", "evacuation_time"])
             df.to_csv(f"{tmp_path}/forceful_time.csv", index=False)
 
-    def make_agents(self, shared, human_var_inst, forceful_human_var_inst):
+    def make_agents(self, shared):
         tmp_id = 0
-        tmp_id = self.generate_human(tmp_id, shared, human_var_inst, forceful_human_var_inst)
+        tmp_id = self.generate_human(tmp_id, shared)
 
-    def generate_human(self, tmp_id, shared, human_var_inst, forceful_human_var_inst):
+    def generate_human(self, tmp_id, shared):
         tmp_div = 1.
         pos_array = []
         human_array = []
@@ -171,11 +174,9 @@ class MoveAgent(mesa.Model):
                     raise ValueError(f"Non-finite forceful position generated for id {i}: {pos}")
                 human = Human(i, self, pos, velocity,
                               tmp_div, shared,
-                              human_var_inst,
                               self.space, self.add_file_name,
                               forceful_initial=True,
                               is_forceful=True,
-                              forceful_human_var_inst=forceful_human_var_inst,
                               )
                 self.space.place_agent(human, pos)
                 self.schedule.add(human)
@@ -188,7 +189,7 @@ class MoveAgent(mesa.Model):
                 velocity = self.decide_vel()
                 human = Human(i, self, pos, velocity,
                               tmp_div, shared,
-                              human_var_inst, self.space,
+                              self.space,
                               self.add_file_name,)
                 self.space.place_agent(human, pos)
                 self.schedule.add(human)
@@ -394,32 +395,28 @@ class MoveAgent(mesa.Model):
     
     def check_f_parameter(self):
         count = 0
-        if self.m != self.f_m:
-            print(f"self.m change {self.m=} {self.f_m=}")
+        normal = self.agent_params_by_trait[Trait.NORMAL]
+        forceful = self.agent_params_by_trait[Trait.FORCEFUL]
+        if normal.m != forceful.m:
+            print(f"self.m change normal={normal.m} forceful={forceful.m}")
             count += 1
-        if self.tau != self.f_tau:
+        if normal.tau != forceful.tau:
             print("tau change")
             count += 1
-        if self.repul_h[0] != self.f_repul_h[0]:
-            print("repul_h[0] change")
-            count += 1
-        if self.repul_h[1] != self.f_repul_h[1]:
-            print("repul_h[1] change")
-            count += 1
-        if self.repul_m[0] != self.f_repul_m[0]:
+        if normal.repul_m[0] != forceful.repul_m[0]:
             print("repul_m[0] change")
             count += 1
-        if self.repul_m[1] != self.f_repul_m[1]:
+        if normal.repul_m[1] != forceful.repul_m[1]:
             print("repul_m[1] change")
             count += 1
-        if self.k != self.f_k:
+        if normal.k != forceful.k:
             print("k change")
             count += 1
-        if self.kappa != self.f_kappa:
+        if normal.kappa != forceful.kappa:
             print("kappa change")
             count += 1
-        if self.f_r != self.r:
-            print("f_r change")
+        if normal.r != forceful.r:
+            print("r change")
             count += 1
         return count
 
