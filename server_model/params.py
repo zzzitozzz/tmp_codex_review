@@ -151,6 +151,18 @@ def build_sfm_params(human_var, forceful_human_var, r, f_r, preset_name="baselin
             r_scale=1.0 if strategy.r_ff_scale is None else strategy.r_ff_scale,
         )
     if strategy.asym_fn and strategy.alpha is not None:
-        baseline_pair[(Trait.FORCEFUL, Trait.NORMAL)] = _scaled_pair(base_pair, strategy.alpha)
-        baseline_pair[(Trait.NORMAL, Trait.FORCEFUL)] = _scaled_pair(base_pair, 1.0 - strategy.alpha)
+        baseline_pair[(Trait.FORCEFUL, Trait.NORMAL)] = PairParams(
+            a=base_pair.a * strategy.alpha,
+            b=base_pair.b * (1.0 - strategy.alpha),
+            k=base_pair.k * strategy.alpha,
+            kappa=base_pair.kappa * strategy.alpha,
+            r_scale=base_pair.r_scale * strategy.alpha,
+        )
+        baseline_pair[(Trait.NORMAL, Trait.FORCEFUL)] = PairParams(
+            a=base_pair.a * (1.0 - strategy.alpha),
+            b=base_pair.b * strategy.alpha,
+            k=base_pair.k * (1.0 - strategy.alpha),
+            kappa=base_pair.kappa * (1.0 - strategy.alpha),
+            r_scale=base_pair.r_scale * (1.0 - strategy.alpha),
+        )
     return agent_params, PairParamsTable(baseline_pair)
