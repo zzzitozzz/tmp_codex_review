@@ -93,7 +93,7 @@ def build_sfm_vars(args, f_tau):
 
 def make_new_model_instance(human_var, forceful_human_var, wall_arr, pop_num, for_pop, dests, edges,
                             goal_arr, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
-                            share_block_info=False):
+                            share_block_info=False, forceful_preset="baseline"):
     ex_num = 1 # force_tau
     # if csv_plot:
     #     file_name_array = [
@@ -131,7 +131,8 @@ def make_new_model_instance(human_var, forceful_human_var, wall_arr, pop_num, fo
         f_r=f_r,
         pos_func=pos_func,
         csv_plot=csv_plot,
-        info_share_mode=InfoShareMode.SHARE_BLOCKED_ROAD if share_block_info else InfoShareMode.NO_SHARE)
+        info_share_mode=InfoShareMode.SHARE_BLOCKED_ROAD if share_block_info else InfoShareMode.NO_SHARE,
+        forceful_preset=forceful_preset)
     return m
 
 
@@ -160,6 +161,9 @@ if __name__ == '__main__':
     parser.add_argument("--v0", type=float, default=0.8, help="通常避難者の希望速度係数")
     parser.add_argument("--f_v0", type=float, help="強引避難者の希望速度係数")
     parser.add_argument("--share_block_info", action="store_true", help="不通道路情報を共有する")
+    parser.add_argument("--forceful_preset", default="baseline",
+                        choices=["baseline", "goal_strong", "ff_weak", "asym_fn", "combo"],
+                        help="SFM係数プリセット")
     args = parser.parse_args()
 
     pop_num = args.pop_num
@@ -185,7 +189,7 @@ if __name__ == '__main__':
     while 1:
         m = make_new_model_instance(
             human_var, forceful_human_var, wall_arr, pop_num, for_pop, dests, edges, goal_arr, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
-            share_block_info=share_block_info)
+            share_block_info=share_block_info, forceful_preset=args.forceful_preset)
         m.running = True
         while m.running:
             m.step()

@@ -51,7 +51,23 @@ class PairParamsTable:
         return formatted
 
 
-def build_sfm_params(human_var, forceful_human_var, r, f_r):
+GOAL_STRONG_FACTORS = {"m": 1.2, "v0": 1.2, "tau": 0.8}
+FF_WEAK_FACTORS = {"a": 0.7, "b": 1.3, "k": 0.7, "kappa": 0.7, "r_scale": 0.9}
+ASYM_FORCEFUL_FACTORS = {"a": 0.7, "b": 1.3, "k": 0.7, "kappa": 0.7, "r_scale": 0.9}
+ASYM_NORMAL_FACTORS = {"a": 1.3, "b": 0.7, "k": 1.3, "kappa": 1.3, "r_scale": 1.1}
+
+
+def _apply_pair_factors(params: PairParams, factors: Dict[str, float]) -> PairParams:
+    return PairParams(
+        a=params.a * factors.get("a", 1.0),
+        b=params.b * factors.get("b", 1.0),
+        k=params.k * factors.get("k", 1.0),
+        kappa=params.kappa * factors.get("kappa", 1.0),
+        r_scale=params.r_scale * factors.get("r_scale", 1.0),
+    )
+
+
+def build_sfm_params(human_var, forceful_human_var, r, f_r, preset_name="baseline"):
     v0 = human_var.get("v0", 0.8)
     f_v0 = forceful_human_var.get("f_v0", v0)
     normal_agent = AgentParams(
@@ -102,4 +118,26 @@ def build_sfm_params(human_var, forceful_human_var, r, f_r):
             kappa=forceful_human_var["f_kappa"],
         ),
     }
+    preset = preset_name.lower()
+    if preset in {"goal_strong", "combo"}:
+        agent_params[Trait.FORCEFUL] = AgentParams(
+            r=forceful_agent.r,
+            m=forceful_agent.m * GOAL_STRONG_FACTORS["m"],
+            tau=forceful_agent.tau * GOAL_STRONG_FACTORS["tau"],
+            v0=forceful_agent.v0 * GOAL_STRONG_FACTORS["v0"],
+            k=forceful_agent.k,
+            kappa=forceful_agent.kappa,
+            repul_m=forceful_agent.repul_m,
+        )
+    if preset in {"ff_weak", "combo"}:
+        baseline_pair[(Trait.FORCEFUL, Trait.FORCEFUL)] = _apply_pair_factors(
+            baseline_pair[(Trait.FORCEFUL, Trait.FORCEFUL)], FF_WEAK_FACTORS
+        )
+    if preset in {"asym_fn", "combo"}:
+        baseline_pair[(Trait.FORCEFUL, Trait.NORMAL)] = _apply_pair_factors(
+            baseline_pair[(Trait.FORCEFUL, Trait.NORMAL)], ASYM_FORCEFUL_FACTORS
+        )
+        baseline_pair[(Trait.NORMAL, Trait.FORCEFUL)] = _apply_pair_factors(
+            baseline_pair[(Trait.NORMAL, Trait.FORCEFUL)], ASYM_NORMAL_FACTORS
+        )
     return agent_params, PairParamsTable(baseline_pair)
