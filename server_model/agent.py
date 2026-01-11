@@ -7,6 +7,8 @@ import pandas as pd
 import math
 from enum import Enum, IntEnum, auto
 
+from params import Trait
+
 class RouteState(Enum):
     NORMAL = auto() #通常：停滞したら再探索してよい
     BLOCKED_WAIT = auto() #不通道路を発見：再探索しない
@@ -31,17 +33,6 @@ class SharedParams:
         self.vision = vision
         self.dt = dt
 
-class HumanSpecs:
-    "_hspecs: Human-related common specs set used in Human (and ForcefulHuman)"
-    def __init__(self, r, m, tau, k, kappa, repul_h, repul_m): 
-        self.r = r
-        self.m = m
-        self.tau = tau
-        self.k = k
-        self.kappa = kappa
-        self.repul_h = repul_h
-        self.repul_m = repul_m
-
 
 class Human(mesa.Agent):
     STUCK_WINDOW = 10
@@ -51,7 +42,6 @@ class Human(mesa.Agent):
     def __init__(self, unique_id, model,
                  pos, velocity,
                  tmp_div, shared,
-                 human_var_inst,
                  space, add_file_name,
                  re_route_state=RouteState.NORMAL,
                  route_idx=0, 
@@ -60,16 +50,14 @@ class Human(mesa.Agent):
                  forceful_initial=False,
                  can_become_forceful=False,
                  is_forceful=None,
-                 forceful_human_var_inst=None,
                  ):
         super().__init__(unique_id, model)
         self.pos = np.array(pos)
         self.velocity = velocity
         self._shared = shared
-        self._hspecs = human_var_inst
-        self._force_specs = forceful_human_var_inst
         self.forceful_initial = forceful_initial
         self.can_become_forceful = can_become_forceful
+        self.forceful_trait = forceful_initial
         self.is_forceful = forceful_initial if is_forceful is None else is_forceful
         self.tmp_div = tmp_div #特定の人同士の反発力の大きさを除算もしくは乗算する値
         self.space = space #エージェントが動き回る空間を管理するモジュール
@@ -92,7 +80,11 @@ class Human(mesa.Agent):
 
     @property
     def hspecs(self):
-        return self._force_specs if self.is_forceful and self._force_specs is not None else self._hspecs
+        return self.model.agent_params_by_trait[self.current_trait]
+
+    @property
+    def current_trait(self):
+        return Trait.FORCEFUL if self.is_forceful else Trait.NORMAL
     
     @property
     def cur_dest(self):
@@ -289,8 +281,8 @@ class Human(mesa.Agent):
         return fx, fy
 
     def force_from_goal(self, theta):
-        fx = self.hspecs.m * (0.8 * theta[0] - self.velocity[0]) / self.hspecs.tau
-        fy = self.hspecs.m * (0.8 * theta[1] - self.velocity[1]) / self.hspecs.tau
+        fx = self.hspecs.m * (self.hspecs.v0 * theta[0] - self.velocity[0]) / self.hspecs.tau
+        fy = self.hspecs.m * (self.hspecs.v0 * theta[1] - self.velocity[1]) / self.hspecs.tau
         return fx, fy
 
     def force_from_human(self, neighbor):
@@ -298,22 +290,23 @@ class Human(mesa.Agent):
         n_ij = (self.pos - neighbor.pos) / \
             self.space.get_distance(self.pos, neighbor.pos)
         t_ij = [-n_ij[1], n_ij[0]]
-        dis = (self.hspecs.r + neighbor.hspecs.r) - \
+        pair_params = self.model.get_pair_params(self.current_trait, neighbor.current_trait)
+        dis = (self.hspecs.r + neighbor.hspecs.r) * pair_params.r_scale - \
             self.space.get_distance(self.pos, neighbor.pos)
         if dis >= 0:
-            fx += (self.hspecs.repul_h[0] * (math.e ** (dis / self.hspecs.repul_h[1])) + self.hspecs.k * dis) * \
-                n_ij[0] + self.hspecs.kappa * dis * \
+            fx += (pair_params.a * (math.e ** (dis / pair_params.b)) + pair_params.k * dis) * \
+                n_ij[0] + pair_params.kappa * dis * \
                 np.dot(
                 (neighbor.velocity - self.velocity), t_ij)*t_ij[0]
-            fy += (self.hspecs.repul_h[0] * (math.e ** (dis / self.hspecs.repul_h[1])) + self.hspecs.k * dis) * \
-                n_ij[1] + self.hspecs.kappa * dis * \
+            fy += (pair_params.a * (math.e ** (dis / pair_params.b)) + pair_params.k * dis) * \
+                n_ij[1] + pair_params.kappa * dis * \
                 np.dot(
                     (neighbor.velocity - self.velocity), t_ij)*t_ij[1]
         else:
-            fx += self.hspecs.repul_h[0] * (math.e **
-                                     (dis / self.hspecs.repul_h[1])) * n_ij[0]
-            fy += self.hspecs.repul_h[0] * (math.e **
-                                     (dis / self.hspecs.repul_h[1])) * n_ij[1]
+            fx += pair_params.a * (math.e **
+                                     (dis / pair_params.b)) * n_ij[0]
+            fy += pair_params.a * (math.e **
+                                     (dis / pair_params.b)) * n_ij[1]
         return fx, fy
 
     def force_from_wall(self):
@@ -416,18 +409,6 @@ class Human(mesa.Agent):
             self.velocity = v / vn
         return None
     
-class ForcefulHumanSpecs:
-    "_fhspecs:ForcefulHuman-related specs set used in ForcefulHuman"
-    def __init__(self, f_r, f_m, f_tau, f_k, f_kappa, f_repul_h, f_repul_m):
-        self.r = f_r
-        self.m = f_m
-        self.tau = f_tau
-        self.k = f_k
-        self.kappa = f_kappa
-        self.repul_h = f_repul_h
-        self.repul_m = f_repul_m
-    
-
 class Obstacle(mesa.Agent):
     def __init__(self, unique_id, model, pos, dir):
         super().__init__(unique_id, model)
