@@ -126,7 +126,8 @@ def build_strategy_config(args, f_tau):
     preset = args.forceful_preset
     auto_goal_strong = args.forceful_mass is not None or args.forceful_tau is not None
     auto_ff_weak = any(val is not None for val in [args.a_ff, args.b_ff, args.k_ff, args.kappa_ff, args.r_ff_scale])
-    auto_asym_fn = args.alpha is not None
+    asym_flags = [args.asym_a, args.asym_b, args.asym_k, args.asym_r, args.asym_kappa]
+    auto_asym_fn = args.alpha is not None or any(flag is True for flag in asym_flags)
     goal_strong = args.goal_strong or preset in {"goal_strong", "combo"} or auto_goal_strong
     ff_weak = args.ff_weak or preset in {"ff_weak", "combo"} or auto_ff_weak
     asym_fn = args.asym_fn or preset in {"asym_fn", "combo"} or auto_asym_fn
@@ -140,6 +141,11 @@ def build_strategy_config(args, f_tau):
         goal_strong=goal_strong,
         ff_weak=ff_weak,
         asym_fn=asym_fn,
+        asym_a=args.asym_a,
+        asym_b=args.asym_b,
+        asym_k=args.asym_k,
+        asym_r=args.asym_r,
+        asym_kappa=args.asym_kappa,
         forceful_mass=forceful_mass,
         forceful_tau=forceful_tau,
         a_ff=args.a_ff,
@@ -161,6 +167,11 @@ def apply_strategy_shorthand(args):
         "kappa_ff": None,
         "r_ff_scale": None,
         "alpha": None,
+        "asym_a": None,
+        "asym_b": None,
+        "asym_k": None,
+        "asym_r": None,
+        "asym_kappa": None,
         "goal_strong": False,
         "ff_weak": False,
         "asym_fn": False,
@@ -174,7 +185,7 @@ def apply_strategy_shorthand(args):
     presets = {"baseline", "goal_strong", "ff_weak", "asym_fn", "combo"}
     if tokens and tokens[0] in presets:
         args.forceful_preset = tokens.pop(0)
-    bool_flags = {"goal_strong", "ff_weak", "asym_fn"}
+    bool_flags = {"goal_strong", "ff_weak", "asym_fn", "asym_a", "asym_b", "asym_k", "asym_r", "asym_kappa"}
     key_map = {
         "f_m": "forceful_mass",
         "f_tau": "forceful_tau",

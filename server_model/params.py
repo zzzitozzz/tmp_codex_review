@@ -56,6 +56,11 @@ class StrategyConfig:
     goal_strong: bool = False
     ff_weak: bool = False
     asym_fn: bool = False
+    asym_a: bool | None = None
+    asym_b: bool | None = None
+    asym_k: bool | None = None
+    asym_r: bool | None = None
+    asym_kappa: bool | None = None
     forceful_mass: float | None = None
     forceful_tau: float | None = None
     a_ff: float | None = None
@@ -70,6 +75,11 @@ class StrategyConfig:
             "goal_strong": self.goal_strong,
             "ff_weak": self.ff_weak,
             "asym_fn": self.asym_fn,
+            "asym_a": self.asym_a,
+            "asym_b": self.asym_b,
+            "asym_k": self.asym_k,
+            "asym_r": self.asym_r,
+            "asym_kappa": self.asym_kappa,
             "forceful_mass": self.forceful_mass,
             "forceful_tau": self.forceful_tau,
             "a_ff": self.a_ff,
@@ -151,18 +161,31 @@ def build_sfm_params(human_var, forceful_human_var, r, f_r, preset_name="baselin
             r_scale=1.0 if strategy.r_ff_scale is None else strategy.r_ff_scale,
         )
     if strategy.asym_fn and strategy.alpha is not None:
+        asym_flags = {
+            "a": strategy.asym_a,
+            "b": strategy.asym_b,
+            "k": strategy.asym_k,
+            "r": strategy.asym_r,
+            "kappa": strategy.asym_kappa,
+        }
+        apply_all = not any(flag is True for flag in asym_flags.values())
+        apply_a = apply_all or asym_flags["a"] is True
+        apply_b = apply_all or asym_flags["b"] is True
+        apply_k = apply_all or asym_flags["k"] is True
+        apply_r = apply_all or asym_flags["r"] is True
+        apply_kappa = apply_all or asym_flags["kappa"] is True
         baseline_pair[(Trait.FORCEFUL, Trait.NORMAL)] = PairParams(
-            a=base_pair.a * strategy.alpha,
-            b=base_pair.b * (1.0 - strategy.alpha),
-            k=base_pair.k * strategy.alpha,
-            kappa=base_pair.kappa * strategy.alpha,
-            r_scale=base_pair.r_scale * strategy.alpha,
+            a=base_pair.a * (strategy.alpha if apply_a else 1.0),
+            b=base_pair.b * ((1.0 - strategy.alpha) if apply_b else 1.0),
+            k=base_pair.k * (strategy.alpha if apply_k else 1.0),
+            kappa=base_pair.kappa * (strategy.alpha if apply_kappa else 1.0),
+            r_scale=base_pair.r_scale * (strategy.alpha if apply_r else 1.0),
         )
         baseline_pair[(Trait.NORMAL, Trait.FORCEFUL)] = PairParams(
-            a=base_pair.a * (1.0 - strategy.alpha),
-            b=base_pair.b * strategy.alpha,
-            k=base_pair.k * (1.0 - strategy.alpha),
-            kappa=base_pair.kappa * (1.0 - strategy.alpha),
-            r_scale=base_pair.r_scale * (1.0 - strategy.alpha),
+            a=base_pair.a * ((1.0 - strategy.alpha) if apply_a else 1.0),
+            b=base_pair.b * (strategy.alpha if apply_b else 1.0),
+            k=base_pair.k * ((1.0 - strategy.alpha) if apply_k else 1.0),
+            kappa=base_pair.kappa * ((1.0 - strategy.alpha) if apply_kappa else 1.0),
+            r_scale=base_pair.r_scale * ((1.0 - strategy.alpha) if apply_r else 1.0),
         )
     return agent_params, PairParamsTable(baseline_pair)
