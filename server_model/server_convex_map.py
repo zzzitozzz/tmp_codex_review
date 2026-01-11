@@ -122,6 +122,22 @@ def build_strategy_config(args, f_tau):
 
 
 def apply_strategy_shorthand(args):
+    defaults = {
+        "forceful_mass": None,
+        "forceful_tau": None,
+        "a_ff": None,
+        "b_ff": None,
+        "k_ff": None,
+        "kappa_ff": None,
+        "r_ff_scale": None,
+        "alpha": None,
+        "goal_strong": False,
+        "ff_weak": False,
+        "asym_fn": False,
+    }
+    for key, value in defaults.items():
+        if not hasattr(args, key):
+            setattr(args, key, value)
     if not args.strategy_args:
         return None
     tokens = list(args.strategy_args)
@@ -226,17 +242,6 @@ if __name__ == '__main__':
     parser.add_argument("--f_repul_m_b", type=float, help="強引避難者の壁反発B")
     parser.add_argument("--v0", type=float, default=0.8, help="通常避難者の希望速度係数")
     parser.add_argument("--f_v0", type=float, help="強引避難者の希望速度係数")
-    parser.add_argument("--goal_strong", action="store_true", help="強引避難者の目標引力を強化")
-    parser.add_argument("--forceful_mass", type=float, help="goal_strong時の強引避難者の質量")
-    parser.add_argument("--forceful_tau", type=float, help="goal_strong時の強引避難者のtau")
-    parser.add_argument("--ff_weak", action="store_true", help="FF間の反発を弱める")
-    parser.add_argument("--a_ff", type=float, help="FF間のA_ij")
-    parser.add_argument("--b_ff", type=float, help="FF間のB_ij")
-    parser.add_argument("--k_ff", type=float, help="FF間のk")
-    parser.add_argument("--kappa_ff", type=float, help="FF間のkappa")
-    parser.add_argument("--r_ff_scale", type=float, help="FF間のr_ijスケール")
-    parser.add_argument("--asym_fn", action="store_true", help="FN/NFを非対称にする")
-    parser.add_argument("--alpha", type=float, help="asym_fn用のalpha(0<alpha<1)")
     parser.add_argument("--share_block_info", action="store_true", help="不通道路情報を共有する")
     parser.add_argument("--forceful_preset", default="baseline",
                         choices=["baseline", "goal_strong", "ff_weak", "asym_fn", "combo"],
