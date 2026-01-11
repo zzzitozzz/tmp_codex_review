@@ -3,7 +3,7 @@ from model import MoveAgent
 
 import numpy as np
 from dataclasses import dataclass, field
-from agent import SharedParams, Human, HumanSpecs, ForcefulHumanSpecs, Wall, InfoShareMode
+from agent import SharedParams, Human, Wall, InfoShareMode
 
 @dataclass
 class InitPosFuncs:
@@ -89,6 +89,37 @@ class InitPosFuncs:
     def get_distance(self, pos1, pos2):
         return np.linalg.norm(pos1 - pos2)
 
+def _resolve_forceful(val, fallback):
+    return fallback if val is None else val
+
+
+def build_sfm_vars(args, f_tau):
+    base = {
+        "m": args.m,
+        "tau": args.tau,
+        "k": args.k,
+        "kappa": args.kappa,
+        "repul_h": [args.repul_h_a, args.repul_h_b],
+        "repul_m": [args.repul_m_a, args.repul_m_b],
+        "v0": args.v0,
+    }
+    forceful = {
+        "f_m": _resolve_forceful(args.f_m, args.m),
+        "f_tau": f_tau,
+        "f_k": _resolve_forceful(args.f_k, args.k),
+        "f_kappa": _resolve_forceful(args.f_kappa, args.kappa),
+        "f_repul_h": [
+            _resolve_forceful(args.f_repul_h_a, args.repul_h_a),
+            _resolve_forceful(args.f_repul_h_b, args.repul_h_b),
+        ],
+        "f_repul_m": [
+            _resolve_forceful(args.f_repul_m_a, args.repul_m_a),
+            _resolve_forceful(args.f_repul_m_b, args.repul_m_b),
+        ],
+        "f_v0": _resolve_forceful(args.f_v0, args.v0),
+    }
+    return base, forceful
+
 
 def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges, dead_edges,
                             goal_arr, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
@@ -145,6 +176,23 @@ if __name__ == '__main__':
     parser.add_argument("pop_num", type=int, help="通常の人数")
     parser.add_argument("f_tau", type=float, help="変更する変数の値")
     parser.add_argument("tmp_seed", type=int, help="seed値")
+    parser.add_argument("--m", type=float, default=80.0, help="通常避難者の質量")
+    parser.add_argument("--f_m", type=float, help="強引避難者の質量")
+    parser.add_argument("--tau", type=float, default=0.5, help="通常避難者のtau")
+    parser.add_argument("--k", type=float, default=120000.0, help="通常避難者のk")
+    parser.add_argument("--kappa", type=float, default=240000.0, help="通常避難者のkappa")
+    parser.add_argument("--repul_h_a", type=float, default=2000.0, help="通常避難者のA_ij")
+    parser.add_argument("--repul_h_b", type=float, default=0.08, help="通常避難者のB_ij")
+    parser.add_argument("--repul_m_a", type=float, default=2000.0, help="壁反発のA")
+    parser.add_argument("--repul_m_b", type=float, default=0.08, help="壁反発のB")
+    parser.add_argument("--f_k", type=float, help="強引避難者のk")
+    parser.add_argument("--f_kappa", type=float, help="強引避難者のkappa")
+    parser.add_argument("--f_repul_h_a", type=float, help="強引避難者のA_ij")
+    parser.add_argument("--f_repul_h_b", type=float, help="強引避難者のB_ij")
+    parser.add_argument("--f_repul_m_a", type=float, help="強引避難者の壁反発A")
+    parser.add_argument("--f_repul_m_b", type=float, help="強引避難者の壁反発B")
+    parser.add_argument("--v0", type=float, default=0.8, help="通常避難者の希望速度係数")
+    parser.add_argument("--f_v0", type=float, help="強引避難者の希望速度係数")
     parser.add_argument("--share_block_info", action="store_true", help="不通道路情報を共有する")
     args = parser.parse_args()
 
@@ -157,10 +205,7 @@ if __name__ == '__main__':
     csv_plot = True  # csvファイル(各エージェントの動きの軌跡)を出力するかどうか
     len_sq = 3  # 長方形の一辺の長さはlen_sq*2
     # max_f_r = 1.01
-    human_var = {"m": 80., "tau": 0.5, "k": 120000., "kappa": 240000.,
-                 "repul_h": [2000., 0.08], "repul_m": [2000., 0.08]}
-    forceful_human_var = {"f_m": 80., "f_tau": f_tau, "f_k": 120000.,
-                          "f_kappa": 240000., "f_repul_h": [2000., 0.08], "f_repul_m": [2000., 0.08]}
+    human_var, forceful_human_var = build_sfm_vars(args, f_tau)
     pos_func = InitPosFuncs()
     wall_arr = np.array([[[2.0, 2.0], [156.0, 2.0]], [[156.0, 2.0], [156.0, 100.0]],
                         [[156.0, 100.0], [2.0, 100.0]], [[2.0, 100.0], [2.0, 2.0]], 
