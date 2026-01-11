@@ -151,6 +151,41 @@ def build_strategy_config(args, f_tau):
     )
 
 
+def apply_strategy_shorthand(args):
+    if not args.strategy_args:
+        return None
+    tokens = list(args.strategy_args)
+    presets = {"baseline", "goal_strong", "ff_weak", "asym_fn", "combo"}
+    if tokens and tokens[0] in presets:
+        args.forceful_preset = tokens.pop(0)
+    bool_flags = {"goal_strong", "ff_weak", "asym_fn"}
+    key_map = {
+        "f_m": "forceful_mass",
+        "f_tau": "forceful_tau",
+        "a_ff": "a_ff",
+        "b_ff": "b_ff",
+        "k_ff": "k_ff",
+        "kappa_ff": "kappa_ff",
+        "r_ff_scale": "r_ff_scale",
+        "alpha": "alpha",
+    }
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        if token in bool_flags:
+            setattr(args, token, True)
+            idx += 1
+            continue
+        if token not in key_map:
+            raise ValueError(f"Unknown strategy token: {token}")
+        if idx + 1 >= len(tokens):
+            raise ValueError(f"Missing value for strategy token: {token}")
+        value = float(tokens[idx + 1])
+        setattr(args, key_map[token], value)
+        idx += 2
+    return None
+
+
 def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges, dead_edges,
                             goal_arr, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
                             share_block_info=False, forceful_preset="baseline", strategy=None):
@@ -240,7 +275,9 @@ if __name__ == '__main__':
     parser.add_argument("--forceful_preset", default="baseline",
                         choices=["baseline", "goal_strong", "ff_weak", "asym_fn", "combo"],
                         help="SFM係数プリセット")
+    parser.add_argument("strategy_args", nargs="*", help="preset/strategy shorthand")
     args = parser.parse_args()
+    apply_strategy_shorthand(args)
 
     pop_num = args.pop_num  # 通常の人数
     f_tau = args.f_tau  # 変更する変数の値
