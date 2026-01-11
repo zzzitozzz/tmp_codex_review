@@ -4,6 +4,7 @@ from model import MoveAgent
 import numpy as np
 from dataclasses import dataclass
 from agent import SharedParams, Human, Wall, InfoShareMode
+from params import StrategyConfig
 
 @dataclass
 class InitPosFuncs:
@@ -91,9 +92,31 @@ def build_sfm_vars(args, f_tau):
     return base, forceful
 
 
+def build_strategy_config(args, f_tau):
+    if args.asym_fn and args.alpha is None:
+        raise ValueError("--asym_fn requires --alpha")
+    if args.alpha is not None and not (0.0 < args.alpha < 1.0):
+        raise ValueError("--alpha must satisfy 0 < alpha < 1")
+    forceful_tau = args.forceful_tau if args.forceful_tau is not None else f_tau
+    forceful_mass = args.forceful_mass if args.forceful_mass is not None else args.f_m
+    return StrategyConfig(
+        goal_strong=args.goal_strong,
+        ff_weak=args.ff_weak,
+        asym_fn=args.asym_fn,
+        forceful_mass=forceful_mass,
+        forceful_tau=forceful_tau,
+        a_ff=args.a_ff,
+        b_ff=args.b_ff,
+        k_ff=args.k_ff,
+        kappa_ff=args.kappa_ff,
+        r_ff_scale=args.r_ff_scale,
+        alpha=args.alpha,
+    )
+
+
 def make_new_model_instance(human_var, forceful_human_var, wall_arr, pop_num, for_pop, dests, edges,
                             goal_arr, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
-                            share_block_info=False, forceful_preset="baseline"):
+                            share_block_info=False, forceful_preset="baseline", strategy=None):
     ex_num = 1 # force_tau
     # if csv_plot:
     #     file_name_array = [
@@ -132,7 +155,8 @@ def make_new_model_instance(human_var, forceful_human_var, wall_arr, pop_num, fo
         pos_func=pos_func,
         csv_plot=csv_plot,
         info_share_mode=InfoShareMode.SHARE_BLOCKED_ROAD if share_block_info else InfoShareMode.NO_SHARE,
-        forceful_preset=forceful_preset)
+        forceful_preset=forceful_preset,
+        strategy=strategy)
     return m
 
 
@@ -160,6 +184,17 @@ if __name__ == '__main__':
     parser.add_argument("--f_repul_m_b", type=float, help="強引避難者の壁反発B")
     parser.add_argument("--v0", type=float, default=0.8, help="通常避難者の希望速度係数")
     parser.add_argument("--f_v0", type=float, help="強引避難者の希望速度係数")
+    parser.add_argument("--goal_strong", action="store_true", help="強引避難者の目標引力を強化")
+    parser.add_argument("--forceful_mass", type=float, help="goal_strong時の強引避難者の質量")
+    parser.add_argument("--forceful_tau", type=float, help="goal_strong時の強引避難者のtau")
+    parser.add_argument("--ff_weak", action="store_true", help="FF間の反発を弱める")
+    parser.add_argument("--a_ff", type=float, help="FF間のA_ij")
+    parser.add_argument("--b_ff", type=float, help="FF間のB_ij")
+    parser.add_argument("--k_ff", type=float, help="FF間のk")
+    parser.add_argument("--kappa_ff", type=float, help="FF間のkappa")
+    parser.add_argument("--r_ff_scale", type=float, help="FF間のr_ijスケール")
+    parser.add_argument("--asym_fn", action="store_true", help="FN/NFを非対称にする")
+    parser.add_argument("--alpha", type=float, help="asym_fn用のalpha(0<alpha<1)")
     parser.add_argument("--share_block_info", action="store_true", help="不通道路情報を共有する")
     parser.add_argument("--forceful_preset", default="baseline",
                         choices=["baseline", "goal_strong", "ff_weak", "asym_fn", "combo"],
@@ -176,6 +211,7 @@ if __name__ == '__main__':
     len_sq = 3  # 長方形の一辺の長さはlen_sq*2
     # max_f_r = 1.01
     human_var, forceful_human_var = build_sfm_vars(args, f_tau)
+    strategy = build_strategy_config(args, f_tau)
     pos_func = InitPosFuncs()
     wall_arr = np.array([[[2., 40.], [54., 40.]],
                 [[2., 26.], [16., 26.]],
@@ -189,7 +225,7 @@ if __name__ == '__main__':
     while 1:
         m = make_new_model_instance(
             human_var, forceful_human_var, wall_arr, pop_num, for_pop, dests, edges, goal_arr, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
-            share_block_info=share_block_info, forceful_preset=args.forceful_preset)
+            share_block_info=share_block_info, forceful_preset=args.forceful_preset, strategy=strategy)
         m.running = True
         while m.running:
             m.step()

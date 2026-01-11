@@ -12,7 +12,7 @@ import heapq
 import math
 
 from agent import SharedParams, Human, Wall, RouteState, InfoShareMode, BlockInfoState
-from params import Trait, build_sfm_params
+from params import Trait, StrategyConfig, build_sfm_params
 warnings.simplefilter('ignore', UserWarning)
 
 
@@ -28,7 +28,8 @@ class MoveAgent(mesa.Model):
             len_sq=3., f_r=0.,pos_func= {},
             csv_plot=False,
             info_share_mode=InfoShareMode.NO_SHARE,
-            forceful_preset="baseline"):
+            forceful_preset="baseline",
+            strategy: StrategyConfig | None = None):
         super().__init__()
         self.population = population
         self.for_population = for_population
@@ -64,6 +65,7 @@ class MoveAgent(mesa.Model):
         self.csv_plot = csv_plot
         self.info_share_mode = info_share_mode
         self.forceful_preset = forceful_preset
+        self.strategy = strategy or StrategyConfig()
         self.max_steps = 1500
         self.log_capacity = self.max_steps + 1
         self.num_agents = self.population + self.for_population
@@ -79,6 +81,7 @@ class MoveAgent(mesa.Model):
             self.r,
             self.f_r,
             self.forceful_preset,
+            self.strategy,
         )
         self.dist_to_goal_normal = [] # dist_to_goal[i]: ノード i から避難所までの最短距離 (A* の g(n) に相当)
         self.next_to_goal_normal = [] # next_to_goal[i]: ノード i から避難所までの最短経路 (A* の f(n) に相当)
@@ -125,6 +128,7 @@ class MoveAgent(mesa.Model):
                 "run_time" : run_time,
                 "shared_val" : vars(shared),
                 "forceful_preset": self.forceful_preset,
+                "strategy": self.strategy.to_dict(),
                 "agent_params": {
                     trait.name: vars(self.agent_params_by_trait[trait])
                     for trait in Trait
