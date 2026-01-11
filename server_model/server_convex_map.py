@@ -93,16 +93,23 @@ def build_sfm_vars(args, f_tau):
 
 
 def build_strategy_config(args, f_tau):
-    if args.asym_fn and args.alpha is None:
+    preset = args.forceful_preset
+    auto_goal_strong = args.forceful_mass is not None or args.forceful_tau is not None
+    auto_ff_weak = any(val is not None for val in [args.a_ff, args.b_ff, args.k_ff, args.kappa_ff, args.r_ff_scale])
+    auto_asym_fn = args.alpha is not None
+    goal_strong = args.goal_strong or preset in {"goal_strong", "combo"} or auto_goal_strong
+    ff_weak = args.ff_weak or preset in {"ff_weak", "combo"} or auto_ff_weak
+    asym_fn = args.asym_fn or preset in {"asym_fn", "combo"} or auto_asym_fn
+    if asym_fn and args.alpha is None:
         raise ValueError("--asym_fn requires --alpha")
     if args.alpha is not None and not (0.0 < args.alpha < 1.0):
         raise ValueError("--alpha must satisfy 0 < alpha < 1")
     forceful_tau = args.forceful_tau if args.forceful_tau is not None else f_tau
     forceful_mass = args.forceful_mass if args.forceful_mass is not None else args.f_m
     return StrategyConfig(
-        goal_strong=args.goal_strong,
-        ff_weak=args.ff_weak,
-        asym_fn=args.asym_fn,
+        goal_strong=goal_strong,
+        ff_weak=ff_weak,
+        asym_fn=asym_fn,
         forceful_mass=forceful_mass,
         forceful_tau=forceful_tau,
         a_ff=args.a_ff,

@@ -94,6 +94,13 @@ def _scaled_pair(params: PairParams, factor: float) -> PairParams:
 def build_sfm_params(human_var, forceful_human_var, r, f_r, preset_name="baseline",
                      strategy: StrategyConfig | None = None):
     strategy = strategy or StrategyConfig()
+    preset = preset_name.lower()
+    if preset in {"goal_strong", "combo"}:
+        strategy = StrategyConfig(**{**strategy.to_dict(), "goal_strong": True})
+    if preset in {"ff_weak", "combo"}:
+        strategy = StrategyConfig(**{**strategy.to_dict(), "ff_weak": True})
+    if preset in {"asym_fn", "combo"}:
+        strategy = StrategyConfig(**{**strategy.to_dict(), "asym_fn": True})
     v0 = human_var.get("v0", 0.8)
     base_pair = PairParams(
         a=human_var["repul_h"][0],
