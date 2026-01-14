@@ -127,10 +127,13 @@ def build_strategy_config(args, f_tau):
     auto_goal_strong = args.forceful_mass is not None or args.forceful_tau is not None
     auto_ff_weak = any(val is not None for val in [args.a_ff, args.b_ff, args.k_ff, args.kappa_ff, args.r_ff_scale])
     asym_flags = [args.asym_a, args.asym_b, args.asym_k, args.asym_r, args.asym_kappa]
-    auto_asym_fn = args.alpha is not None or any(flag is True for flag in asym_flags)
+    has_asym_flags = any(flag is True for flag in asym_flags)
+    auto_asym_fn = args.alpha is not None or has_asym_flags
     goal_strong = args.goal_strong or preset in {"goal_strong", "combo"} or auto_goal_strong
     ff_weak = args.ff_weak or preset in {"ff_weak", "combo"} or auto_ff_weak
     asym_fn = args.asym_fn or preset in {"asym_fn", "combo"} or auto_asym_fn
+    if asym_fn and not has_asym_flags:
+        raise ValueError("--asym_fn requires at least one asym_* flag")
     if asym_fn and args.alpha is None:
         raise ValueError("--asym_fn requires --alpha")
     if args.alpha is not None and not (0.0 < args.alpha < 1.0):
