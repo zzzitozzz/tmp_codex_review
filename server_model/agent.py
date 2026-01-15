@@ -186,12 +186,20 @@ class Human(mesa.Agent):
         return None
     
     def goal_check(self, dest_dis):
-        self._update_entered_gate()
         cur_pos = self.cur_dest
         dx = self.pos[0] - cur_pos[0]
         dy = self.pos[1] - cur_pos[1]
         near_node = (dx * dx + dy * dy) <= (self.NODE_NEAR * self.NODE_NEAR)
-        if self._entered_gate and near_node:
+        is_turn = False
+        if self.route_idx > 0 and self.route_idx + 1 < len(self.route):
+            prev_pos = self.model.dests[self.route[self.route_idx - 1]]
+            next_pos = self.model.dests[self.route[self.route_idx + 1]]
+            dir_in = self._axis_dir(prev_pos, cur_pos)
+            dir_out = self._axis_dir(cur_pos, next_pos)
+            is_turn = not np.array_equal(dir_in, dir_out) and not np.array_equal(dir_in, -dir_out)
+        if is_turn:
+            self._update_entered_gate()
+        if (near_node and (not is_turn or self._entered_gate)):
             if len(self.route) == self.route_idx + 1:
                 self.in_goal = True
                 self.velocity = [0.0, 0.0]
