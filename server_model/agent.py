@@ -39,6 +39,7 @@ class Human(mesa.Agent):
     STUCK_WINDOW = 10
     STUCK_DIST = 0.2
     REROUTE_COOLDOWN = 30  # 再探索後、30ステップは再探索しない
+    NODE_NEAR = 1.0
 
     def __init__(self, unique_id, model,
                  pos, velocity,
@@ -76,6 +77,7 @@ class Human(mesa.Agent):
         self.elapsed_time = elapsed_time #経過時間
         self.last_reroute_time = -10**9  # 最後に再探索した時間を保存する変数
         self.target_pos = None
+        self._entered_gate = False
         self._needs_reroute_from_share = False
         ######################
 
@@ -95,6 +97,7 @@ class Human(mesa.Agent):
         return self.target_pos if self.target_pos is not None else self.cur_dest
 
     def update_target_pos_from_route(self):
+        self._entered_gate = False
         prev_pos = None
         next_pos = None
         if self.route_idx > 0:
@@ -110,6 +113,33 @@ class Human(mesa.Agent):
             road_width=nav_targets.DEFAULT_ROAD_WIDTH,
         )
         return self.target_pos
+
+    def _axis_dir(self, from_pos, to_pos):
+        vec = np.array(to_pos) - np.array(from_pos)
+        if abs(vec[0]) >= abs(vec[1]):
+            return np.array([1 if vec[0] > 0 else -1 if vec[0] < 0 else 0, 0], dtype=int)
+        return np.array([0, 1 if vec[1] > 0 else -1 if vec[1] < 0 else 0], dtype=int)
+
+    def _update_entered_gate(self):
+        if self._entered_gate:
+            return None
+        if self.route_idx == 0:
+            self._entered_gate = True
+            return None
+        prev_pos = self.model.dests[self.route[self.route_idx - 1]]
+        cur_pos = self.cur_dest
+        dir_in = self._axis_dir(prev_pos, cur_pos)
+        half_width = nav_targets.DEFAULT_ROAD_WIDTH / 2.0
+        if np.array_equal(dir_in, np.array([0, -1])):
+            # prev=[5,100], cur=[5,38] の場合は入口線 y=35 (cy-h)、agent_y<=35 で通過判定。
+            self._entered_gate = self.pos[1] <= cur_pos[1] - half_width
+        elif np.array_equal(dir_in, np.array([0, 1])):
+            self._entered_gate = self.pos[1] >= cur_pos[1] + half_width
+        elif np.array_equal(dir_in, np.array([1, 0])):
+            self._entered_gate = self.pos[0] >= cur_pos[0] + half_width
+        elif np.array_equal(dir_in, np.array([-1, 0])):
+            self._entered_gate = self.pos[0] <= cur_pos[0] - half_width
+        return None
     
     def set_up_initial_route(self):
         self.route, self.dest = self.model.select_first_subgoal(self)
@@ -156,14 +186,18 @@ class Human(mesa.Agent):
         return None
     
     def goal_check(self, dest_dis):
-        if dest_dis < 1.5:
+        self._update_entered_gate()
+        cur_pos = self.cur_dest
+        dx = self.pos[0] - cur_pos[0]
+        dy = self.pos[1] - cur_pos[1]
+        near_node = (dx * dx + dy * dy) <= (self.NODE_NEAR * self.NODE_NEAR)
+        if self._entered_gate and near_node:
             if len(self.route) == self.route_idx + 1:
                 self.in_goal = True
                 self.velocity = [0.0, 0.0]
             else:
                 self.route_idx += 1
                 self.update_target_pos_from_route()
-                return None
             return None
 
     def re_route(self):
