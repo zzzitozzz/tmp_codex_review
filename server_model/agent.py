@@ -58,21 +58,37 @@ def get_turn(dir_in, dir_out):
         return Turn.LEFT
     return Turn.STRAIGHT
 
-def s_value(pos, cur, turn):
-    x, y = float(pos[0]), float(pos[1])
-    cx, cy = float(cur[0]), float(cur[1])
-    if turn == Turn.RIGHT:
-        return y - (x + (cy - cx))
-    if turn == Turn.LEFT:
-        return x + y - (cx + cy)
-    return 0.0
+def choose_inner_corner(cur, dir_in, dir_out, h):
+    x_sign = dir_out[0] if abs(dir_out[0]) > 0.0 else -dir_in[0]
+    y_sign = dir_out[1] if abs(dir_out[1]) > 0.0 else -dir_in[1]
+    x = cur[0] + x_sign * h
+    y = cur[1] + y_sign * h
+    if x_sign > 0 and y_sign < 0:
+        name = "NE"
+    elif x_sign < 0 and y_sign < 0:
+        name = "NW"
+    elif x_sign > 0 and y_sign > 0:
+        name = "SE"
+    else:
+        name = "SW"
+    return name, np.array([x, y], dtype=float)
 
-def crossed_midline(pos, cur, dir_in, turn, h):
-    if turn == Turn.STRAIGHT:
-        return False
+def slope_from_corner(corner_name):
+    if corner_name in {"NE", "SW"}:
+        return -1.0
+    return 1.0
+
+def midline_s(pos, cur, slope):
+    dx = float(pos[0]) - float(cur[0])
+    dy = float(pos[1]) - float(cur[1])
+    if slope > 0:
+        return dy - dx
+    return dy + dx
+
+def crossed_midline(pos, cur, dir_in, h, slope):
     p_entry = np.array(cur) - np.array(dir_in) * h
-    s_entry = s_value(p_entry, cur, turn)
-    s_pos = s_value(pos, cur, turn)
+    s_entry = midline_s(p_entry, cur, slope)
+    s_pos = midline_s(pos, cur, slope)
     return s_pos * s_entry <= 0.0
 
 def clip_to_bounds(pos, space, margin):
@@ -89,19 +105,17 @@ def clip_to_bounds(pos, space, margin):
     clipped[1] = np.clip(clipped[1], y_min + margin, y_max - margin)
     return clipped
 
-def push_target_to_far_side(target, cur, dir_in, turn, h, delta, max_steps, space):
-    if turn == Turn.STRAIGHT:
-        return target
+def push_target_to_far_side(target, cur, dir_in, h, slope, delta, max_steps, space):
     p_entry = np.array(cur) - np.array(dir_in) * h
-    s_entry = s_value(p_entry, cur, turn)
-    s_target = s_value(target, cur, turn)
+    s_entry = midline_s(p_entry, cur, slope)
+    s_target = midline_s(target, cur, slope)
     if s_target * s_entry <= 0.0:
         return clip_to_bounds(target, space, CLIP_MARGIN)
     candidate = np.array(target, dtype=float)
     step = delta
     for _ in range(max_steps):
         candidate = candidate + step * np.array(dir_in)
-        if s_value(candidate, cur, turn) * s_entry <= 0.0:
+        if midline_s(candidate, cur, slope) * s_entry <= 0.0:
             break
         step *= 1.5
     return clip_to_bounds(candidate, space, CLIP_MARGIN)
@@ -186,10 +200,10 @@ class Human(mesa.Agent):
                   f"aim={self.aim_pos} state={self.re_route_state.name}")
         turn_context = self._get_turn_context(self.route_idx)
         if turn_context is not None:
-            turn, cur, dir_in = turn_context
+            cur, dir_in, slope, _ = turn_context
             self.aim_pos = push_target_to_far_side(
-                self.aim_pos, cur, dir_in, turn,
-                ROAD_HALF_WIDTH, DELTA_GATE, MAX_GATE_PUSH, self.space)
+                self.aim_pos, cur, dir_in,
+                ROAD_HALF_WIDTH, slope, DELTA_GATE, MAX_GATE_PUSH, self.space)
         return self.aim_pos
     
     def _get_turn_context(self, route_idx):
@@ -203,7 +217,9 @@ class Human(mesa.Agent):
         turn = get_turn(dir_in, dir_out)
         if turn == Turn.STRAIGHT:
             return None
-        return turn, np.array(cur, dtype=float), dir_in
+        corner_name, _ = choose_inner_corner(np.array(cur, dtype=float), dir_in, dir_out, ROAD_HALF_WIDTH)
+        slope = slope_from_corner(corner_name)
+        return np.array(cur, dtype=float), dir_in, slope, corner_name
 
     def set_up_initial_route(self):
         self.route, self.dest = self.model.select_first_subgoal(self)
@@ -252,8 +268,8 @@ class Human(mesa.Agent):
     def goal_check(self, dest_dis):
         turn_context = self._get_turn_context(self.route_idx)
         if turn_context is not None:
-            turn, cur, dir_in = turn_context
-            if crossed_midline(self.pos, cur, dir_in, turn, ROAD_HALF_WIDTH):
+            cur, dir_in, slope, _ = turn_context
+            if crossed_midline(self.pos, cur, dir_in, ROAD_HALF_WIDTH, slope):
                 if len(self.route) == self.route_idx + 1:
                     self.in_goal = True
                     self.velocity = [0.0, 0.0]
