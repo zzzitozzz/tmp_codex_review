@@ -26,6 +26,86 @@ class BlockInfoState(IntEnum):
     PENDING = 1
     KNOWN = 2
 
+class Turn(Enum):
+    STRAIGHT = auto()
+    RIGHT = auto()
+    LEFT = auto()
+
+ROAD_WIDTH = 6.0
+ROAD_HALF_WIDTH = ROAD_WIDTH / 2.0
+DELTA_GATE = 0.8
+MAX_GATE_PUSH = 5
+CLIP_MARGIN = 0.2
+
+def axis_dir(a, b):
+    delta = np.array(b) - np.array(a)
+    dx, dy = float(delta[0]), float(delta[1])
+    if abs(dx) >= abs(dy) and abs(dx) > 0.0:
+        return np.array([math.copysign(1.0, dx), 0.0])
+    if abs(dy) > 0.0:
+        return np.array([0.0, math.copysign(1.0, dy)])
+    return np.array([0.0, 0.0])
+
+def get_turn(dir_in, dir_out):
+    if np.allclose(dir_in, 0.0) or np.allclose(dir_out, 0.0):
+        return Turn.STRAIGHT
+    if np.allclose(dir_in, dir_out) or np.allclose(dir_in, -dir_out):
+        return Turn.STRAIGHT
+    cross = dir_in[0] * dir_out[1] - dir_in[1] * dir_out[0]
+    if cross > 0:
+        return Turn.RIGHT
+    if cross < 0:
+        return Turn.LEFT
+    return Turn.STRAIGHT
+
+def s_value(pos, cur, turn):
+    x, y = float(pos[0]), float(pos[1])
+    cx, cy = float(cur[0]), float(cur[1])
+    if turn == Turn.RIGHT:
+        return y - (x + (cy - cx))
+    if turn == Turn.LEFT:
+        return x + y - (cx + cy)
+    return 0.0
+
+def crossed_midline(pos, cur, dir_in, turn, h):
+    if turn == Turn.STRAIGHT:
+        return False
+    p_entry = np.array(cur) - np.array(dir_in) * h
+    s_entry = s_value(p_entry, cur, turn)
+    s_pos = s_value(pos, cur, turn)
+    return s_pos * s_entry <= 0.0
+
+def clip_to_bounds(pos, space, margin):
+    x_min = getattr(space, "x_min", 0.0)
+    y_min = getattr(space, "y_min", 0.0)
+    x_max = getattr(space, "x_max", None)
+    y_max = getattr(space, "y_max", None)
+    if x_max is None:
+        x_max = space.width
+    if y_max is None:
+        y_max = space.height
+    clipped = np.array(pos, dtype=float)
+    clipped[0] = np.clip(clipped[0], x_min + margin, x_max - margin)
+    clipped[1] = np.clip(clipped[1], y_min + margin, y_max - margin)
+    return clipped
+
+def push_target_to_far_side(target, cur, dir_in, turn, h, delta, max_steps, space):
+    if turn == Turn.STRAIGHT:
+        return target
+    p_entry = np.array(cur) - np.array(dir_in) * h
+    s_entry = s_value(p_entry, cur, turn)
+    s_target = s_value(target, cur, turn)
+    if s_target * s_entry <= 0.0:
+        return clip_to_bounds(target, space, CLIP_MARGIN)
+    candidate = np.array(target, dtype=float)
+    step = delta
+    for _ in range(max_steps):
+        candidate = candidate + step * np.array(dir_in)
+        if s_value(candidate, cur, turn) * s_entry <= 0.0:
+            break
+        step *= 1.5
+    return clip_to_bounds(candidate, space, CLIP_MARGIN)
+
 class SharedParams:
     "_shared: Common human-related parameters shared between Human and ForcefulHuman instances."
     def __init__(self, in_dest_d, vision, dt):
@@ -104,8 +184,27 @@ class Human(mesa.Agent):
             print(f"[scatter-dest] id={self.unique_id} idx={self.route_idx} "
                   f"node={self.route[self.route_idx]} node_pos={node_pos} "
                   f"aim={self.aim_pos} state={self.re_route_state.name}")
+        turn_context = self._get_turn_context(self.route_idx)
+        if turn_context is not None:
+            turn, cur, dir_in = turn_context
+            self.aim_pos = push_target_to_far_side(
+                self.aim_pos, cur, dir_in, turn,
+                ROAD_HALF_WIDTH, DELTA_GATE, MAX_GATE_PUSH, self.space)
         return self.aim_pos
     
+    def _get_turn_context(self, route_idx):
+        if route_idx <= 0 or route_idx + 1 >= len(self.route):
+            return None
+        prev = self.model.dests[self.route[route_idx - 1]]
+        cur = self.model.dests[self.route[route_idx]]
+        nxt = self.model.dests[self.route[route_idx + 1]]
+        dir_in = axis_dir(prev, cur)
+        dir_out = axis_dir(cur, nxt)
+        turn = get_turn(dir_in, dir_out)
+        if turn == Turn.STRAIGHT:
+            return None
+        return turn, np.array(cur, dtype=float), dir_in
+
     def set_up_initial_route(self):
         self.route, self.dest = self.model.select_first_subgoal(self)
         self.route_idx = 0
@@ -151,6 +250,17 @@ class Human(mesa.Agent):
         return None
     
     def goal_check(self, dest_dis):
+        turn_context = self._get_turn_context(self.route_idx)
+        if turn_context is not None:
+            turn, cur, dir_in = turn_context
+            if crossed_midline(self.pos, cur, dir_in, turn, ROAD_HALF_WIDTH):
+                if len(self.route) == self.route_idx + 1:
+                    self.in_goal = True
+                    self.velocity = [0.0, 0.0]
+                else:
+                    self.route_idx += 1
+                    self.update_aim_pos_from_route() # scatter-dest
+                return None
         if dest_dis < 1.5:
             if len(self.route) == self.route_idx + 1:
                 self.in_goal = True
