@@ -8,6 +8,7 @@ import math
 from enum import Enum, IntEnum, auto
 
 from params import Trait
+import nav_targets
 
 class RouteState(Enum):
     NORMAL = auto() #通常：停滞したら再探索してよい
@@ -38,6 +39,7 @@ class Human(mesa.Agent):
     STUCK_WINDOW = 10
     STUCK_DIST = 0.2
     REROUTE_COOLDOWN = 30  # 再探索後、30ステップは再探索しない
+    NODE_NEAR = 1.0
 
     def __init__(self, unique_id, model,
                  pos, velocity,
@@ -74,7 +76,8 @@ class Human(mesa.Agent):
         self.pos_array.append(self.pos)
         self.elapsed_time = elapsed_time #経過時間
         self.last_reroute_time = -10**9  # 最後に再探索した時間を保存する変数
-        self.aim_pos = None # scatter-dest: 分散目的地
+        self.target_pos = None
+        self._entered_gate = False
         self._needs_reroute_from_share = False
         ######################
 
@@ -90,43 +93,75 @@ class Human(mesa.Agent):
     def cur_dest(self):
         return self.model.dests[self.route[self.route_idx]]
 
-    # scatter-dest
     def get_target_pos(self):
-        return self.aim_pos if self.aim_pos is not None else self.cur_dest
+        return self.target_pos if self.target_pos is not None else self.cur_dest
 
-    # scatter-dest
-    def update_aim_pos_from_route(self):
-        node_pos = self.cur_dest
-        walls_for_los = self.model.get_walls_for_los(self.re_route_state)
-        self.aim_pos = self.model.generate_scatter_destination(
-            self.pos, node_pos, walls_for_los, rng=self.rng)
-        if getattr(self.model, "debug_scatter_dest", False):
-            print(f"[scatter-dest] id={self.unique_id} idx={self.route_idx} "
-                  f"node={self.route[self.route_idx]} node_pos={node_pos} "
-                  f"aim={self.aim_pos} state={self.re_route_state.name}")
-        return self.aim_pos
+    def update_target_pos_from_route(self):
+        self._entered_gate = False
+        prev_pos = None
+        next_pos = None
+        if self.route_idx > 0:
+            prev_pos = self.model.dests[self.route[self.route_idx - 1]]
+        if self.route_idx + 1 < len(self.route):
+            next_pos = self.model.dests[self.route[self.route_idx + 1]]
+        self.target_pos = nav_targets.compute_target_pos(
+            agent_pos=self.pos,
+            prev_pos=prev_pos,
+            cur_pos=self.cur_dest,
+            next_pos=next_pos,
+            in_dest_d=self._shared.in_dest_d,
+            road_width=nav_targets.DEFAULT_ROAD_WIDTH,
+        )
+        return self.target_pos
+
+    def _axis_dir(self, from_pos, to_pos):
+        vec = np.array(to_pos) - np.array(from_pos)
+        if abs(vec[0]) >= abs(vec[1]):
+            return np.array([1 if vec[0] > 0 else -1 if vec[0] < 0 else 0, 0], dtype=int)
+        return np.array([0, 1 if vec[1] > 0 else -1 if vec[1] < 0 else 0], dtype=int)
+
+    def _update_entered_gate(self):
+        if self._entered_gate:
+            return None
+        if self.route_idx == 0:
+            self._entered_gate = True
+            return None
+        prev_pos = self.model.dests[self.route[self.route_idx - 1]]
+        cur_pos = self.cur_dest
+        dir_in = self._axis_dir(prev_pos, cur_pos)
+        half_width = nav_targets.DEFAULT_ROAD_WIDTH / 2.0
+        if np.array_equal(dir_in, np.array([0, -1])):
+            # prev=[5,100], cur=[5,38] の場合は入口線 y=35 (cy-h)、agent_y<=35 で通過判定。
+            self._entered_gate = self.pos[1] <= cur_pos[1] - half_width
+        elif np.array_equal(dir_in, np.array([0, 1])):
+            self._entered_gate = self.pos[1] >= cur_pos[1] + half_width
+        elif np.array_equal(dir_in, np.array([1, 0])):
+            self._entered_gate = self.pos[0] >= cur_pos[0] + half_width
+        elif np.array_equal(dir_in, np.array([-1, 0])):
+            self._entered_gate = self.pos[0] <= cur_pos[0] - half_width
+        return None
     
     def set_up_initial_route(self):
         self.route, self.dest = self.model.select_first_subgoal(self)
         self.route_idx = 0
-        self.update_aim_pos_from_route() # scatter-dest
+        self.update_target_pos_from_route()
         return None
     
     def step(self):  # 次の位置を特定するための計算式を書く
         if self._needs_reroute_from_share:
             self.route, self.dest = self.model.select_first_subgoal(self)
             self.route_idx = 0
-            self.update_aim_pos_from_route() # scatter-dest
+            self.update_target_pos_from_route()
             self.last_reroute_time = self.elapsed_time
             self._needs_reroute_from_share = False
         self._calculate()
         if self.is_forceful:
-            dest_dis = self.space.get_distance(self.pos, self.get_target_pos()) # scatter-dest
+            dest_dis = self.space.get_distance(self.pos, self.get_target_pos())
         else:
             if self.route[self.route_idx] == self.model.goal_arr[0]: #最終goalなら
                 dest_dis = self.space.get_distance(self.pos, self.cur_dest)
             else:
-                dest_dis = self.space.get_distance(self.pos, self.get_target_pos()) # scatter-dest
+                dest_dis = self.space.get_distance(self.pos, self.get_target_pos())
         self.goal_check(dest_dis)
         self.tmp_pos[0] = self.pos[0] + \
             self.velocity[0] * self._shared.dt  # 仮の位置を計算
@@ -151,14 +186,26 @@ class Human(mesa.Agent):
         return None
     
     def goal_check(self, dest_dis):
-        if dest_dis < 1.5:
+        cur_pos = self.cur_dest
+        dx = self.pos[0] - cur_pos[0]
+        dy = self.pos[1] - cur_pos[1]
+        near_node = (dx * dx + dy * dy) <= (self.NODE_NEAR * self.NODE_NEAR)
+        is_turn = False
+        if self.route_idx > 0 and self.route_idx + 1 < len(self.route):
+            prev_pos = self.model.dests[self.route[self.route_idx - 1]]
+            next_pos = self.model.dests[self.route[self.route_idx + 1]]
+            dir_in = self._axis_dir(prev_pos, cur_pos)
+            dir_out = self._axis_dir(cur_pos, next_pos)
+            is_turn = not np.array_equal(dir_in, dir_out) and not np.array_equal(dir_in, -dir_out)
+        if is_turn:
+            self._update_entered_gate()
+        if (near_node and (not is_turn or self._entered_gate)):
             if len(self.route) == self.route_idx + 1:
                 self.in_goal = True
                 self.velocity = [0.0, 0.0]
             else:
                 self.route_idx += 1
-                self.update_aim_pos_from_route() # scatter-dest
-                return None
+                self.update_target_pos_from_route()
             return None
 
     def re_route(self):
@@ -186,7 +233,7 @@ class Human(mesa.Agent):
         if moved < D_MIN:
             self.route, self.dest = self.model.select_first_subgoal(self)
             self.route_idx = 0
-            self.update_aim_pos_from_route() # scatter-dest
+            self.update_target_pos_from_route()
             self.last_reroute_time = self.elapsed_time
         return None
 
@@ -202,7 +249,7 @@ class Human(mesa.Agent):
                 # 不通を考慮した距離木で再ルート
                 self.route, self.dest = self.model.select_first_subgoal(self)
                 self.route_idx = 0
-                self.update_aim_pos_from_route() # scatter-dest
+                self.update_target_pos_from_route()
                 return True
         return False
 
@@ -400,7 +447,7 @@ class Human(mesa.Agent):
         return fx, fy
     
     def _calculate(self):
-        fx, fy = self._force(self.get_target_pos()) # scatter-dest
+        fx, fy = self._force(self.get_target_pos())
         self.velocity[0] += fx * self._shared.dt
         self.velocity[1] += fy * self._shared.dt
         if (np.linalg.norm(self.velocity, 2) > 1.):  # review
