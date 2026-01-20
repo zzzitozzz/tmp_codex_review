@@ -103,6 +103,8 @@ def build_sfm_vars(args, f_tau):
         "repul_h": [args.repul_h_a, args.repul_h_b],
         "repul_m": [args.repul_m_a, args.repul_m_b],
         "v0": args.v0,
+        "respect_factor": args.respect_factor,
+        "respect_debug": args.respect_debug,
     }
     forceful = {
         "f_m": _resolve_forceful(args.f_m, args.m),
@@ -290,6 +292,8 @@ if __name__ == '__main__':
     parser.add_argument("--f_repul_m_b", type=float, help="強引避難者の壁反発B")
     parser.add_argument("--v0", type=float, default=0.8, help="通常避難者の希望速度係数")
     parser.add_argument("--f_v0", type=float, help="強引避難者の希望速度係数")
+    parser.add_argument("--respect_factor", type=float, default=0.7, help="MSFM respect area係数")
+    parser.add_argument("--respect_debug", action="store_true", help="respect area判定ログを出力")
     parser.add_argument("--share_block_info", action="store_true", help="不通道路情報を共有する")
     parser.add_argument("--forceful_preset", default="baseline",
                         choices=["baseline", "goal_strong", "ff_weak", "asym_fn", "combo"],
