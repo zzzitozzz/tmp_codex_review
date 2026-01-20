@@ -27,6 +27,100 @@ class BlockInfoState(IntEnum):
     PENDING = 1
     KNOWN = 2
 
+class Turn(Enum):
+    STRAIGHT = auto()
+    RIGHT = auto()
+    LEFT = auto()
+
+ROAD_WIDTH = 6.0
+ROAD_HALF_WIDTH = ROAD_WIDTH / 2.0
+DELTA_GATE = 0.8
+MAX_GATE_PUSH = 5
+CLIP_MARGIN = 0.2
+
+def axis_dir(a, b):
+    delta = np.array(b) - np.array(a)
+    dx, dy = float(delta[0]), float(delta[1])
+    if abs(dx) >= abs(dy) and abs(dx) > 0.0:
+        return np.array([math.copysign(1.0, dx), 0.0])
+    if abs(dy) > 0.0:
+        return np.array([0.0, math.copysign(1.0, dy)])
+    return np.array([0.0, 0.0])
+
+def get_turn(dir_in, dir_out):
+    if np.allclose(dir_in, 0.0) or np.allclose(dir_out, 0.0):
+        return Turn.STRAIGHT
+    if np.allclose(dir_in, dir_out) or np.allclose(dir_in, -dir_out):
+        return Turn.STRAIGHT
+    cross = dir_in[0] * dir_out[1] - dir_in[1] * dir_out[0]
+    if cross > 0:
+        return Turn.RIGHT
+    if cross < 0:
+        return Turn.LEFT
+    return Turn.STRAIGHT
+
+def choose_inner_corner(cur, dir_in, dir_out, h):
+    x_sign = dir_out[0] if abs(dir_out[0]) > 0.0 else -dir_in[0]
+    y_sign = dir_out[1] if abs(dir_out[1]) > 0.0 else -dir_in[1]
+    x = cur[0] + x_sign * h
+    y = cur[1] + y_sign * h
+    if x_sign > 0 and y_sign < 0:
+        name = "NE"
+    elif x_sign < 0 and y_sign < 0:
+        name = "NW"
+    elif x_sign > 0 and y_sign > 0:
+        name = "SE"
+    else:
+        name = "SW"
+    return name, np.array([x, y], dtype=float)
+
+def slope_from_corner(corner_name):
+    if corner_name in {"NE", "SW"}:
+        return -1.0
+    return 1.0
+
+def midline_s(pos, cur, slope):
+    dx = float(pos[0]) - float(cur[0])
+    dy = float(pos[1]) - float(cur[1])
+    if slope > 0:
+        return dy - dx
+    return dy + dx
+
+def crossed_midline(pos, cur, dir_in, h, slope):
+    p_entry = np.array(cur) - np.array(dir_in) * h
+    s_entry = midline_s(p_entry, cur, slope)
+    s_pos = midline_s(pos, cur, slope)
+    return s_pos * s_entry <= 0.0
+
+def clip_to_bounds(pos, space, margin):
+    x_min = getattr(space, "x_min", 0.0)
+    y_min = getattr(space, "y_min", 0.0)
+    x_max = getattr(space, "x_max", None)
+    y_max = getattr(space, "y_max", None)
+    if x_max is None:
+        x_max = space.width
+    if y_max is None:
+        y_max = space.height
+    clipped = np.array(pos, dtype=float)
+    clipped[0] = np.clip(clipped[0], x_min + margin, x_max - margin)
+    clipped[1] = np.clip(clipped[1], y_min + margin, y_max - margin)
+    return clipped
+
+def push_target_to_far_side(target, cur, dir_in, h, slope, delta, max_steps, space):
+    p_entry = np.array(cur) - np.array(dir_in) * h
+    s_entry = midline_s(p_entry, cur, slope)
+    s_target = midline_s(target, cur, slope)
+    if s_target * s_entry <= 0.0:
+        return clip_to_bounds(target, space, CLIP_MARGIN)
+    candidate = np.array(target, dtype=float)
+    step = delta
+    for _ in range(max_steps):
+        candidate = candidate + step * np.array(dir_in)
+        if midline_s(candidate, cur, slope) * s_entry <= 0.0:
+            break
+        step *= 1.5
+    return clip_to_bounds(candidate, space, CLIP_MARGIN)
+
 class SharedParams:
     "_shared: Common human-related parameters shared between Human and ForcefulHuman instances."
     def __init__(self, in_dest_d, vision, dt):
@@ -94,53 +188,41 @@ class Human(mesa.Agent):
         return self.model.dests[self.route[self.route_idx]]
 
     def get_target_pos(self):
-        return self.target_pos if self.target_pos is not None else self.cur_dest
+        return self.aim_pos if self.aim_pos is not None else self.cur_dest
 
-    def update_target_pos_from_route(self):
-        self._entered_gate = False
-        prev_pos = None
-        next_pos = None
-        if self.route_idx > 0:
-            prev_pos = self.model.dests[self.route[self.route_idx - 1]]
-        if self.route_idx + 1 < len(self.route):
-            next_pos = self.model.dests[self.route[self.route_idx + 1]]
-        self.target_pos = nav_targets.compute_target_pos(
-            agent_pos=self.pos,
-            prev_pos=prev_pos,
-            cur_pos=self.cur_dest,
-            next_pos=next_pos,
-            in_dest_d=self._shared.in_dest_d,
-            road_width=nav_targets.DEFAULT_ROAD_WIDTH,
-        )
-        return self.target_pos
-
-    def _axis_dir(self, from_pos, to_pos):
-        vec = np.array(to_pos) - np.array(from_pos)
-        if abs(vec[0]) >= abs(vec[1]):
-            return np.array([1 if vec[0] > 0 else -1 if vec[0] < 0 else 0, 0], dtype=int)
-        return np.array([0, 1 if vec[1] > 0 else -1 if vec[1] < 0 else 0], dtype=int)
-
-    def _update_entered_gate(self):
-        if self._entered_gate:
-            return None
-        if self.route_idx == 0:
-            self._entered_gate = True
-            return None
-        prev_pos = self.model.dests[self.route[self.route_idx - 1]]
-        cur_pos = self.cur_dest
-        dir_in = self._axis_dir(prev_pos, cur_pos)
-        half_width = nav_targets.DEFAULT_ROAD_WIDTH / 2.0
-        if np.array_equal(dir_in, np.array([0, -1])):
-            # prev=[5,100], cur=[5,38] の場合は入口線 y=35 (cy-h)、agent_y<=35 で通過判定。
-            self._entered_gate = self.pos[1] <= cur_pos[1] - half_width
-        elif np.array_equal(dir_in, np.array([0, 1])):
-            self._entered_gate = self.pos[1] >= cur_pos[1] + half_width
-        elif np.array_equal(dir_in, np.array([1, 0])):
-            self._entered_gate = self.pos[0] >= cur_pos[0] + half_width
-        elif np.array_equal(dir_in, np.array([-1, 0])):
-            self._entered_gate = self.pos[0] <= cur_pos[0] - half_width
-        return None
+    # scatter-dest
+    def update_aim_pos_from_route(self):
+        node_pos = self.cur_dest
+        walls_for_los = self.model.get_walls_for_los(self.re_route_state)
+        self.aim_pos = self.model.generate_scatter_destination(
+            self.pos, node_pos, walls_for_los, rng=self.rng)
+        if getattr(self.model, "debug_scatter_dest", False):
+            print(f"[scatter-dest] id={self.unique_id} idx={self.route_idx} "
+                  f"node={self.route[self.route_idx]} node_pos={node_pos} "
+                  f"aim={self.aim_pos} state={self.re_route_state.name}")
+        turn_context = self._get_turn_context(self.route_idx)
+        if turn_context is not None:
+            cur, dir_in, slope, _ = turn_context
+            self.aim_pos = push_target_to_far_side(
+                self.aim_pos, cur, dir_in,
+                ROAD_HALF_WIDTH, slope, DELTA_GATE, MAX_GATE_PUSH, self.space)
+        return self.aim_pos
     
+    def _get_turn_context(self, route_idx):
+        if route_idx <= 0 or route_idx + 1 >= len(self.route):
+            return None
+        prev = self.model.dests[self.route[route_idx - 1]]
+        cur = self.model.dests[self.route[route_idx]]
+        nxt = self.model.dests[self.route[route_idx + 1]]
+        dir_in = axis_dir(prev, cur)
+        dir_out = axis_dir(cur, nxt)
+        turn = get_turn(dir_in, dir_out)
+        if turn == Turn.STRAIGHT:
+            return None
+        corner_name, _ = choose_inner_corner(np.array(cur, dtype=float), dir_in, dir_out, ROAD_HALF_WIDTH)
+        slope = slope_from_corner(corner_name)
+        return np.array(cur, dtype=float), dir_in, slope, corner_name
+
     def set_up_initial_route(self):
         self.route, self.dest = self.model.select_first_subgoal(self)
         self.route_idx = 0
@@ -186,20 +268,18 @@ class Human(mesa.Agent):
         return None
     
     def goal_check(self, dest_dis):
-        cur_pos = self.cur_dest
-        dx = self.pos[0] - cur_pos[0]
-        dy = self.pos[1] - cur_pos[1]
-        near_node = (dx * dx + dy * dy) <= (self.NODE_NEAR * self.NODE_NEAR)
-        is_turn = False
-        if self.route_idx > 0 and self.route_idx + 1 < len(self.route):
-            prev_pos = self.model.dests[self.route[self.route_idx - 1]]
-            next_pos = self.model.dests[self.route[self.route_idx + 1]]
-            dir_in = self._axis_dir(prev_pos, cur_pos)
-            dir_out = self._axis_dir(cur_pos, next_pos)
-            is_turn = not np.array_equal(dir_in, dir_out) and not np.array_equal(dir_in, -dir_out)
-        if is_turn:
-            self._update_entered_gate()
-        if (near_node and (not is_turn or self._entered_gate)):
+        turn_context = self._get_turn_context(self.route_idx)
+        if turn_context is not None:
+            cur, dir_in, slope, _ = turn_context
+            if crossed_midline(self.pos, cur, dir_in, ROAD_HALF_WIDTH, slope):
+                if len(self.route) == self.route_idx + 1:
+                    self.in_goal = True
+                    self.velocity = [0.0, 0.0]
+                else:
+                    self.route_idx += 1
+                    self.update_aim_pos_from_route() # scatter-dest
+                return None
+        if dest_dis < 1.5:
             if len(self.route) == self.route_idx + 1:
                 self.in_goal = True
                 self.velocity = [0.0, 0.0]
