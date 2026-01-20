@@ -228,14 +228,14 @@ class Human(mesa.Agent):
     def set_up_initial_route(self):
         self.route, self.dest = self.model.select_first_subgoal(self)
         self.route_idx = 0
-        self.update_target_pos_from_route()
+        self.update_aim_pos_from_route()
         return None
     
     def step(self):  # 次の位置を特定するための計算式を書く
         if self._needs_reroute_from_share:
             self.route, self.dest = self.model.select_first_subgoal(self)
             self.route_idx = 0
-            self.update_target_pos_from_route()
+            self.update_aim_pos_from_route()
             self.last_reroute_time = self.elapsed_time
             self._needs_reroute_from_share = False
         self._calculate()
@@ -287,7 +287,7 @@ class Human(mesa.Agent):
                 self.velocity = [0.0, 0.0]
             else:
                 self.route_idx += 1
-                self.update_target_pos_from_route()
+                self.update_aim_pos_from_route()
             return None
 
     def re_route(self):
@@ -315,7 +315,7 @@ class Human(mesa.Agent):
         if moved < D_MIN:
             self.route, self.dest = self.model.select_first_subgoal(self)
             self.route_idx = 0
-            self.update_target_pos_from_route()
+            self.update_aim_pos_from_route()
             self.last_reroute_time = self.elapsed_time
         return None
 
@@ -331,7 +331,7 @@ class Human(mesa.Agent):
                 # 不通を考慮した距離木で再ルート
                 self.route, self.dest = self.model.select_first_subgoal(self)
                 self.route_idx = 0
-                self.update_target_pos_from_route()
+                self.update_aim_pos_from_route()
                 return True
         return False
 
