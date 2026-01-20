@@ -210,6 +210,10 @@ class Human(mesa.Agent):
                 self.aim_pos, cur, dir_in,
                 ROAD_HALF_WIDTH, slope, DELTA_GATE, MAX_GATE_PUSH, self.space)
         return self.aim_pos
+
+    def update_target_pos_from_route(self):
+        self.aim_pos = None
+        return self.get_target_pos()
     
     def _get_turn_context(self, route_idx):
         if route_idx <= 0 or route_idx + 1 >= len(self.route):
