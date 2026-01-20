@@ -190,6 +190,10 @@ class Human(mesa.Agent):
     def get_target_pos(self):
         return self.aim_pos if self.aim_pos is not None else self.cur_dest
 
+    def update_target_pos_from_route(self):
+        # Backward-compatible alias for route-based target updates.
+        return self.update_aim_pos_from_route()
+
     def get_desired_direction(self):
         target = self.get_target_pos()
         if target is None or not np.all(np.isfinite(target)):
