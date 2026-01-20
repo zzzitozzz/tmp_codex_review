@@ -69,6 +69,7 @@ class StrategyConfig:
     kappa_ff: float | None = None
     r_ff_scale: float | None = None
     alpha: float | None = None
+    asfm_lambda: float = 0.1
 
     def to_dict(self):
         return {
@@ -88,6 +89,7 @@ class StrategyConfig:
             "kappa_ff": self.kappa_ff,
             "r_ff_scale": self.r_ff_scale,
             "alpha": self.alpha,
+            "asfm_lambda": self.asfm_lambda,
         }
 
 

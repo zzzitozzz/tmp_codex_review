@@ -190,6 +190,18 @@ class Human(mesa.Agent):
     def get_target_pos(self):
         return self.aim_pos if self.aim_pos is not None else self.cur_dest
 
+    def get_desired_direction(self):
+        target = self.get_target_pos()
+        if target is None or not np.all(np.isfinite(target)):
+            target = self.cur_dest
+        if target is None or not np.all(np.isfinite(target)):
+            return np.array([0., 0.])
+        vec = np.array(target, dtype=float) - self.pos
+        norm = np.linalg.norm(vec)
+        if norm < 1e-8:
+            return np.array([0., 0.])
+        return vec / norm
+
     # scatter-dest
     def update_aim_pos_from_route(self):
         node_pos = self.cur_dest
@@ -414,26 +426,33 @@ class Human(mesa.Agent):
 
     def force_from_human(self, neighbor):
         fx, fy = 0., 0.
-        n_ij = (self.pos - neighbor.pos) / \
-            self.space.get_distance(self.pos, neighbor.pos)
+        dist = self.space.get_distance(self.pos, neighbor.pos)
+        dist_safe = max(dist, 1e-8)
+        n_ij = (self.pos - neighbor.pos) / dist_safe
         t_ij = [-n_ij[1], n_ij[0]]
         pair_params = self.model.get_pair_params(self.current_trait, neighbor.current_trait)
-        dis = (self.hspecs.r + neighbor.hspecs.r) * pair_params.r_scale - \
-            self.space.get_distance(self.pos, neighbor.pos)
+        dis = (self.hspecs.r + neighbor.hspecs.r) * pair_params.r_scale - dist
+        desired_dir = self.get_desired_direction()
+        if np.linalg.norm(desired_dir) > 0.0:
+            cos_phi = float(np.clip(np.dot(desired_dir, -n_ij), -1.0, 1.0))
+            lam = self.model.strategy.asfm_lambda
+            # ASFM: weaken psychological repulsion from behind.
+            weight = lam + (1.0 - lam) * (1.0 + cos_phi) / 2.0
+        else:
+            weight = 1.0
+        repulsion = pair_params.a * (math.e ** (dis / pair_params.b))
         if dis >= 0:
-            fx += (pair_params.a * (math.e ** (dis / pair_params.b)) + pair_params.k * dis) * \
+            fx += (weight * repulsion + pair_params.k * dis) * \
                 n_ij[0] + pair_params.kappa * dis * \
                 np.dot(
                 (neighbor.velocity - self.velocity), t_ij)*t_ij[0]
-            fy += (pair_params.a * (math.e ** (dis / pair_params.b)) + pair_params.k * dis) * \
+            fy += (weight * repulsion + pair_params.k * dis) * \
                 n_ij[1] + pair_params.kappa * dis * \
                 np.dot(
                     (neighbor.velocity - self.velocity), t_ij)*t_ij[1]
         else:
-            fx += pair_params.a * (math.e **
-                                     (dis / pair_params.b)) * n_ij[0]
-            fy += pair_params.a * (math.e **
-                                     (dis / pair_params.b)) * n_ij[1]
+            fx += weight * repulsion * n_ij[0]
+            fy += weight * repulsion * n_ij[1]
         return fx, fy
 
     def force_from_wall(self):
