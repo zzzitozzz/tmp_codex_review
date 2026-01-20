@@ -187,8 +187,9 @@ def apply_strategy_shorthand(args):
 
 
 def make_new_model_instance(human_var, forceful_human_var, wall_arr, pop_num, for_pop, dests, edges,
-                            goal_arr, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
-                            share_block_info=False, forceful_preset="baseline", strategy=None):
+                            goal_arr, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
+                            share_block_info=False, forceful_preset="baseline", strategy=None,
+                            csfm_c=0.0, csfm_eps=1e-6, csfm_lambda=0.5):
     ex_num = 1 # force_tau
     # if csv_plot:
     #     file_name_array = [
@@ -220,6 +221,9 @@ def make_new_model_instance(human_var, forceful_human_var, wall_arr, pop_num, fo
         in_dest_d=3,
         vision=1.5,  # 10
         time_step=0,
+        csfm_c=csfm_c,
+        csfm_eps=csfm_eps,
+        csfm_lambda=csfm_lambda,
         add_file_name="",
         add_file_name_arr=file_name_array,
         len_sq=len_sq,
@@ -256,6 +260,9 @@ if __name__ == '__main__':
     parser.add_argument("--f_repul_m_b", type=float, help="強引避難者の壁反発B")
     parser.add_argument("--v0", type=float, default=0.8, help="通常避難者の希望速度係数")
     parser.add_argument("--f_v0", type=float, help="強引避難者の希望速度係数")
+    parser.add_argument("--csfm_c", type=float, default=0.0, help="CSFM回避項の係数C")
+    parser.add_argument("--csfm_eps", type=float, default=1e-6, help="CSFM距離の下限eps")
+    parser.add_argument("--csfm_lambda", type=float, default=0.5, help="CSFM視野重みのlambda")
     parser.add_argument("--share_block_info", action="store_true", help="不通道路情報を共有する")
     parser.add_argument("--forceful_preset", default="baseline",
                         choices=["baseline", "goal_strong", "ff_weak", "asym_fn", "combo"],
@@ -288,7 +295,8 @@ if __name__ == '__main__':
     while 1:
         m = make_new_model_instance(
             human_var, forceful_human_var, wall_arr, pop_num, for_pop, dests, edges, goal_arr, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
-            share_block_info=share_block_info, forceful_preset=args.forceful_preset, strategy=strategy)
+            share_block_info=share_block_info, forceful_preset=args.forceful_preset, strategy=strategy,
+            csfm_c=args.csfm_c, csfm_eps=args.csfm_eps, csfm_lambda=args.csfm_lambda)
         m.running = True
         while m.running:
             m.step()
