@@ -37,6 +37,11 @@ ROAD_HALF_WIDTH = ROAD_WIDTH / 2.0
 DELTA_GATE = 0.8
 MAX_GATE_PUSH = 5
 CLIP_MARGIN = 0.2
+CORNER_MARGIN = 0.6
+CORNER_CONGESTION_ON = 8
+CORNER_CONGESTION_OFF = 5
+CORNER_OFFSET = 0.6
+CROWD_GATE_DELTA = 0.5
 
 def axis_dir(a, b):
     delta = np.array(b) - np.array(a)
@@ -91,6 +96,24 @@ def crossed_midline(pos, cur, dir_in, h, slope):
     s_entry = midline_s(p_entry, cur, slope)
     s_pos = midline_s(pos, cur, slope)
     return s_pos * s_entry <= 0.0
+
+def is_in_corner_area(pos, cur, half_width, margin):
+    dx = abs(float(pos[0]) - float(cur[0]))
+    dy = abs(float(pos[1]) - float(cur[1]))
+    limit = half_width + margin
+    return dx <= limit and dy <= limit
+
+def midline_unit_from_corner(cur, corner, slope):
+    sqrt2_inv = 1.0 / math.sqrt(2.0)
+    if slope > 0:
+        candidates = [np.array([1.0, 1.0]), np.array([-1.0, -1.0])]
+    else:
+        candidates = [np.array([1.0, -1.0]), np.array([-1.0, 1.0])]
+    to_center = np.array(cur, dtype=float) - np.array(corner, dtype=float)
+    best = candidates[0]
+    if np.dot(candidates[1], to_center) > np.dot(candidates[0], to_center):
+        best = candidates[1]
+    return best * sqrt2_inv
 
 def clip_to_bounds(pos, space, margin):
     x_min = getattr(space, "x_min", 0.0)
@@ -173,6 +196,11 @@ class Human(mesa.Agent):
         self.target_pos = None
         self._entered_gate = False
         self._needs_reroute_from_share = False
+        self._corner_node_id = None
+        self._corner_target = None
+        self._corner_in_area = False
+        self._corner_congested = False
+        self._corner_mode = None
         ######################
 
     @property
@@ -207,21 +235,106 @@ class Human(mesa.Agent):
                 self.aim_pos, cur, dir_in,
                 ROAD_HALF_WIDTH, slope, DELTA_GATE, MAX_GATE_PUSH, self.space)
         return self.aim_pos
+
+    def update_target_pos_from_route(self):
+        prev_pos = None
+        if self.route_idx > 0:
+            prev_pos = self.model.dests[self.route[self.route_idx - 1]]
+        cur_pos = self.cur_dest
+        next_pos = None
+        if self.route_idx + 1 < len(self.route):
+            next_pos = self.model.dests[self.route[self.route_idx + 1]]
+        self.aim_pos = nav_targets.compute_target_pos(
+            self.pos, prev_pos, cur_pos, next_pos,
+            self._shared.in_dest_d, road_width=ROAD_WIDTH)
+        turn_context = self._get_turn_context(self.route_idx)
+        if turn_context is not None:
+            cur, dir_in, slope, _ = turn_context
+            self.aim_pos = push_target_to_far_side(
+                self.aim_pos, cur, dir_in,
+                ROAD_HALF_WIDTH, slope, DELTA_GATE, MAX_GATE_PUSH, self.space)
+        return self.aim_pos
     
     def _get_turn_context(self, route_idx):
+        detail = self._get_turn_detail(route_idx)
+        if detail is None:
+            return None
+        _, cur, _, dir_in, _, slope, corner_name, _ = detail
+        return cur, dir_in, slope, corner_name
+
+    def _get_turn_detail(self, route_idx):
         if route_idx <= 0 or route_idx + 1 >= len(self.route):
             return None
-        prev = self.model.dests[self.route[route_idx - 1]]
-        cur = self.model.dests[self.route[route_idx]]
-        nxt = self.model.dests[self.route[route_idx + 1]]
+        prev = np.array(self.model.dests[self.route[route_idx - 1]], dtype=float)
+        cur = np.array(self.model.dests[self.route[route_idx]], dtype=float)
+        nxt = np.array(self.model.dests[self.route[route_idx + 1]], dtype=float)
         dir_in = axis_dir(prev, cur)
         dir_out = axis_dir(cur, nxt)
         turn = get_turn(dir_in, dir_out)
         if turn == Turn.STRAIGHT:
             return None
-        corner_name, _ = choose_inner_corner(np.array(cur, dtype=float), dir_in, dir_out, ROAD_HALF_WIDTH)
+        corner_name, corner_pos = choose_inner_corner(cur, dir_in, dir_out, ROAD_HALF_WIDTH)
         slope = slope_from_corner(corner_name)
-        return np.array(cur, dtype=float), dir_in, slope, corner_name
+        return prev, cur, nxt, dir_in, dir_out, slope, corner_name, corner_pos
+
+    def _reset_corner_state(self):
+        self._corner_node_id = None
+        self._corner_target = None
+        self._corner_in_area = False
+        self._corner_congested = False
+        self._corner_mode = None
+
+    def _update_corner_congestion(self, count):
+        if self._corner_congested:
+            if count <= CORNER_CONGESTION_OFF:
+                self._corner_congested = False
+        else:
+            if count >= CORNER_CONGESTION_ON:
+                self._corner_congested = True
+        return self._corner_congested
+
+    def _build_crowded_corner_target(self, cur, corner_pos, dir_in, slope):
+        u_mid = midline_unit_from_corner(cur, corner_pos, slope)
+        base = np.array(corner_pos, dtype=float) + CORNER_OFFSET * u_mid
+        return push_target_to_far_side(
+            base, cur, dir_in,
+            ROAD_HALF_WIDTH, slope, CROWD_GATE_DELTA, MAX_GATE_PUSH, self.space)
+
+    def _update_corner_target_if_needed(self):
+        detail = self._get_turn_detail(self.route_idx)
+        if detail is None:
+            self._reset_corner_state()
+            return None
+        prev, cur, nxt, dir_in, _, slope, _, corner_pos = detail
+        cur_node_id = self.route[self.route_idx]
+        if self._corner_node_id != cur_node_id:
+            self._corner_congested = False
+            self._corner_in_area = False
+            self._corner_target = None
+            self._corner_node_id = cur_node_id
+        in_corner = is_in_corner_area(self.pos, cur, ROAD_HALF_WIDTH, CORNER_MARGIN)
+        if not in_corner:
+            self._corner_in_area = False
+            return None
+        if self._corner_in_area and self._corner_target is not None:
+            return None
+        self._corner_in_area = True
+        count = self.model.corner_counts.get(cur_node_id, 0)
+        congested = self._update_corner_congestion(count)
+        if congested:
+            target = self._build_crowded_corner_target(cur, corner_pos, dir_in, slope)
+            self._corner_mode = "crowded"
+        else:
+            target = nav_targets.compute_target_pos(
+                self.pos, prev, cur, nxt,
+                self._shared.in_dest_d, road_width=ROAD_WIDTH)
+            target = push_target_to_far_side(
+                target, cur, dir_in,
+                ROAD_HALF_WIDTH, slope, DELTA_GATE, MAX_GATE_PUSH, self.space)
+            self._corner_mode = "normal"
+        self._corner_target = target
+        self.aim_pos = target
+        return None
 
     def set_up_initial_route(self):
         self.route, self.dest = self.model.select_first_subgoal(self)
@@ -236,6 +349,7 @@ class Human(mesa.Agent):
             self.update_target_pos_from_route()
             self.last_reroute_time = self.elapsed_time
             self._needs_reroute_from_share = False
+        self._update_corner_target_if_needed()
         self._calculate()
         if self.is_forceful:
             dest_dis = self.space.get_distance(self.pos, self.get_target_pos())
@@ -277,6 +391,7 @@ class Human(mesa.Agent):
                     self.velocity = [0.0, 0.0]
                 else:
                     self.route_idx += 1
+                    self._reset_corner_state()
                     self.update_aim_pos_from_route() # scatter-dest
                 return None
         if dest_dis < 1.5:
@@ -285,6 +400,7 @@ class Human(mesa.Agent):
                 self.velocity = [0.0, 0.0]
             else:
                 self.route_idx += 1
+                self._reset_corner_state()
                 self.update_target_pos_from_route()
             return None
 
