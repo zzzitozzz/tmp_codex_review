@@ -24,6 +24,7 @@ class MoveAgent(mesa.Model):
             wall_r=0.5, human_var={}, forceful_human_var={},
             width=100, height=100, dt=0.1,
             in_dest_d=3, vision=3, time_step=0,
+            csfm_c=0.0, csfm_eps=1e-6, csfm_lambda=0.5,
             add_file_name="", add_file_name_arr=[],
             len_sq=3., f_r=0.,pos_func= {},
             csv_plot=False,
@@ -56,6 +57,9 @@ class MoveAgent(mesa.Model):
         self.in_dest_d = in_dest_d
         self.vision = vision
         self.time_step = time_step
+        self.csfm_c = csfm_c
+        self.csfm_eps = csfm_eps
+        self.csfm_lambda = csfm_lambda
         self.add_file_name_arr = add_file_name_arr
         self.len_sq = len_sq
         self.f_r = f_r
@@ -74,7 +78,14 @@ class MoveAgent(mesa.Model):
         self.state_log = np.zeros(
             (self.log_capacity, self.num_agents), dtype=np.int8)
         self.goal_reached_step = np.full(self.num_agents, -1, dtype=np.int32)
-        shared = SharedParams(self.in_dest_d, self.vision, self.dt)
+        shared = SharedParams(
+            self.in_dest_d,
+            self.vision,
+            self.dt,
+            csfm_c=self.csfm_c,
+            csfm_eps=self.csfm_eps,
+            csfm_lambda=self.csfm_lambda,
+        )
         self.agent_params_by_trait, self.pair_params_table = build_sfm_params(
             self.human_var,
             self.forceful_human_var,

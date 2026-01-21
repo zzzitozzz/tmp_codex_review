@@ -123,10 +123,13 @@ def push_target_to_far_side(target, cur, dir_in, h, slope, delta, max_steps, spa
 
 class SharedParams:
     "_shared: Common human-related parameters shared between Human and ForcefulHuman instances."
-    def __init__(self, in_dest_d, vision, dt):
+    def __init__(self, in_dest_d, vision, dt, csfm_c=0.0, csfm_eps=1e-6, csfm_lambda=0.5):
         self.in_dest_d = in_dest_d
         self.vision = vision
         self.dt = dt
+        self.csfm_c = csfm_c
+        self.csfm_eps = csfm_eps
+        self.csfm_lambda = csfm_lambda
 
 
 class Human(mesa.Agent):
@@ -207,6 +210,9 @@ class Human(mesa.Agent):
                 self.aim_pos, cur, dir_in,
                 ROAD_HALF_WIDTH, slope, DELTA_GATE, MAX_GATE_PUSH, self.space)
         return self.aim_pos
+
+    def update_target_pos_from_route(self):
+        return self.update_aim_pos_from_route()
     
     def _get_turn_context(self, route_idx):
         if route_idx <= 0 or route_idx + 1 >= len(self.route):
@@ -414,12 +420,15 @@ class Human(mesa.Agent):
 
     def force_from_human(self, neighbor):
         fx, fy = 0., 0.
-        n_ij = (self.pos - neighbor.pos) / \
-            self.space.get_distance(self.pos, neighbor.pos)
+        dist = self.space.get_distance(self.pos, neighbor.pos)
+        d_ij = max(dist, self._shared.csfm_eps)
+        if dist > self._shared.csfm_eps:
+            n_ij = (self.pos - neighbor.pos) / dist
+        else:
+            n_ij = np.array([0.0, 0.0])
         t_ij = [-n_ij[1], n_ij[0]]
         pair_params = self.model.get_pair_params(self.current_trait, neighbor.current_trait)
-        dis = (self.hspecs.r + neighbor.hspecs.r) * pair_params.r_scale - \
-            self.space.get_distance(self.pos, neighbor.pos)
+        dis = (self.hspecs.r + neighbor.hspecs.r) * pair_params.r_scale - dist
         if dis >= 0:
             fx += (pair_params.a * (math.e ** (dis / pair_params.b)) + pair_params.k * dis) * \
                 n_ij[0] + pair_params.kappa * dis * \
@@ -434,6 +443,22 @@ class Human(mesa.Agent):
                                      (dis / pair_params.b)) * n_ij[0]
             fy += pair_params.a * (math.e **
                                      (dis / pair_params.b)) * n_ij[1]
+        if self._shared.csfm_c:
+            rel_vel = self.velocity - neighbor.velocity
+            v_ij = max(0.0, -np.dot(rel_vel, n_ij))
+            w_phi = 1.0
+            target_pos = self.get_target_pos()
+            if target_pos is not None and np.all(np.isfinite(target_pos)):
+                target_vec = np.array(target_pos) - self.pos
+                target_norm = np.linalg.norm(target_vec)
+                if target_norm > self._shared.csfm_eps and np.isfinite(target_norm):
+                    e0_i = target_vec / target_norm
+                    cos_phi = float(np.dot(e0_i, n_ij))
+                    lam = self._shared.csfm_lambda
+                    w_phi = lam + (1.0 - lam) * (1.0 + cos_phi) / 2.0
+            csfm_force = self._shared.csfm_c * self.hspecs.m * w_phi * (v_ij ** 2 / d_ij)
+            fx += csfm_force * n_ij[0]
+            fy += csfm_force * n_ij[1]
         return fx, fy
 
     def force_from_wall(self):
