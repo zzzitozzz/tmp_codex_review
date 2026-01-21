@@ -74,7 +74,13 @@ class MoveAgent(mesa.Model):
         self.state_log = np.zeros(
             (self.log_capacity, self.num_agents), dtype=np.int8)
         self.goal_reached_step = np.full(self.num_agents, -1, dtype=np.int32)
-        shared = SharedParams(self.in_dest_d, self.vision, self.dt)
+        shared = SharedParams(
+            self.in_dest_d,
+            self.vision,
+            self.dt,
+            respect_factor=self.human_var.get("respect_factor", 0.7),
+            respect_debug=self.human_var.get("respect_debug", False),
+        )
         self.agent_params_by_trait, self.pair_params_table = build_sfm_params(
             self.human_var,
             self.forceful_human_var,

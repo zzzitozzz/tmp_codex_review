@@ -103,6 +103,8 @@ def build_sfm_vars(args, f_tau):
         "repul_h": [args.repul_h_a, args.repul_h_b],
         "repul_m": [args.repul_m_a, args.repul_m_b],
         "v0": args.v0,
+        "respect_factor": args.respect_factor,
+        "respect_debug": args.respect_debug,
     }
     forceful = {
         "f_m": _resolve_forceful(args.f_m, args.m),
@@ -227,9 +229,9 @@ def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_a
     #     file_name_array = [
     #         f"/local_home/keito/simple_convex_map/agst_dir/goal_up_forceful_tau/ex{ex_num}_for_{for_pop}_len_{int(len_sq)}/tau_{int(f_tau*100)}/"]
     if csv_plot:
-        file_name_array = [f"./tmp_data/tau_{int(f_tau*100)}/"]
+        file_name_array = [f"./tmp_data/MSFM/tau_{int(f_tau*100)}/"]
     else:
-        file_name_array = [f"./tmp_data/tau_{int(f_tau*100)}/"]
+        file_name_array = [f"./tmp_data/MSFM/tau_{int(f_tau*100)}/"]
 
     m = MoveAgent(
         population=pop_num,
@@ -290,6 +292,8 @@ if __name__ == '__main__':
     parser.add_argument("--f_repul_m_b", type=float, help="強引避難者の壁反発B")
     parser.add_argument("--v0", type=float, default=0.8, help="通常避難者の希望速度係数")
     parser.add_argument("--f_v0", type=float, help="強引避難者の希望速度係数")
+    parser.add_argument("--respect_factor", type=float, default=0.7, help="MSFM respect area係数")
+    parser.add_argument("--respect_debug", action="store_true", help="respect area判定ログを出力")
     parser.add_argument("--share_block_info", action="store_true", help="不通道路情報を共有する")
     parser.add_argument("--forceful_preset", default="baseline",
                         choices=["baseline", "goal_strong", "ff_weak", "asym_fn", "combo"],

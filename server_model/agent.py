@@ -123,10 +123,12 @@ def push_target_to_far_side(target, cur, dir_in, h, slope, delta, max_steps, spa
 
 class SharedParams:
     "_shared: Common human-related parameters shared between Human and ForcefulHuman instances."
-    def __init__(self, in_dest_d, vision, dt):
+    def __init__(self, in_dest_d, vision, dt, respect_factor=0.7, respect_debug=False):
         self.in_dest_d = in_dest_d
         self.vision = vision
         self.dt = dt
+        self.respect_factor = respect_factor
+        self.respect_debug = respect_debug
 
 
 class Human(mesa.Agent):
@@ -226,14 +228,14 @@ class Human(mesa.Agent):
     def set_up_initial_route(self):
         self.route, self.dest = self.model.select_first_subgoal(self)
         self.route_idx = 0
-        self.update_target_pos_from_route()
+        self.update_aim_pos_from_route()
         return None
     
     def step(self):  # 次の位置を特定するための計算式を書く
         if self._needs_reroute_from_share:
             self.route, self.dest = self.model.select_first_subgoal(self)
             self.route_idx = 0
-            self.update_target_pos_from_route()
+            self.update_aim_pos_from_route()
             self.last_reroute_time = self.elapsed_time
             self._needs_reroute_from_share = False
         self._calculate()
@@ -285,7 +287,7 @@ class Human(mesa.Agent):
                 self.velocity = [0.0, 0.0]
             else:
                 self.route_idx += 1
-                self.update_target_pos_from_route()
+                self.update_aim_pos_from_route()
             return None
 
     def re_route(self):
@@ -313,7 +315,7 @@ class Human(mesa.Agent):
         if moved < D_MIN:
             self.route, self.dest = self.model.select_first_subgoal(self)
             self.route_idx = 0
-            self.update_target_pos_from_route()
+            self.update_aim_pos_from_route()
             self.last_reroute_time = self.elapsed_time
         return None
 
@@ -329,7 +331,7 @@ class Human(mesa.Agent):
                 # 不通を考慮した距離木で再ルート
                 self.route, self.dest = self.model.select_first_subgoal(self)
                 self.route_idx = 0
-                self.update_target_pos_from_route()
+                self.update_aim_pos_from_route()
                 return True
         return False
 
@@ -389,7 +391,7 @@ class Human(mesa.Agent):
         theta = self._sincos(dest)
         neighbors = self.model.space.get_neighbors(
             self.pos, self._shared.vision, False)
-        fx, fy = self.force_from_goal(theta)
+        fx, fy = self.force_from_goal(theta, neighbors)
         for neighbor in neighbors:
             if self.unique_id == neighbor.unique_id:
                 continue
@@ -407,9 +409,32 @@ class Human(mesa.Agent):
         fy /= self.hspecs.m
         return fx, fy
 
-    def force_from_goal(self, theta):
-        fx = self.hspecs.m * (self.hspecs.v0 * theta[0] - self.velocity[0]) / self.hspecs.tau
-        fy = self.hspecs.m * (self.hspecs.v0 * theta[1] - self.velocity[1]) / self.hspecs.tau
+    def force_from_goal(self, theta, neighbors):
+        v0_effective = self.hspecs.v0
+        respect_factor = self._shared.respect_factor
+        blocked = False
+        if respect_factor > 0.0:
+            e0 = np.array(theta, dtype=float)
+            if np.all(np.isfinite(e0)):
+                respect_distance = respect_factor * self.hspecs.r
+                if respect_distance > 0.0:
+                    respect_center = self.pos + respect_distance * e0
+                    # MSFM self-stopping (respect area): stop when another human enters the forward circle.
+                    for neighbor in neighbors:
+                        if self.unique_id == neighbor.unique_id:
+                            continue
+                        if not isinstance(neighbor, Human):
+                            continue
+                        diff = neighbor.pos - respect_center
+                        if np.linalg.norm(diff) < respect_distance + neighbor.hspecs.r:
+                            blocked = True
+                            break
+        if blocked:
+            v0_effective = 0.0
+            if self._shared.respect_debug:
+                print(f"[respect] agent={self.unique_id} blocked=True")
+        fx = self.hspecs.m * (v0_effective * theta[0] - self.velocity[0]) / self.hspecs.tau
+        fy = self.hspecs.m * (v0_effective * theta[1] - self.velocity[1]) / self.hspecs.tau
         return fx, fy
 
     def force_from_human(self, neighbor):
