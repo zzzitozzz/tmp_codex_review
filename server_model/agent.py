@@ -92,6 +92,21 @@ def crossed_midline(pos, cur, dir_in, h, slope):
     s_pos = midline_s(pos, cur, slope)
     return s_pos * s_entry <= 0.0
 
+def rot90(vec):
+    return np.array([-vec[1], vec[0]], dtype=float)
+
+def segment_closest_point(point, seg_a, seg_b):
+    ab = seg_b - seg_a
+    ab_len2 = float(np.dot(ab, ab))
+    if ab_len2 < 1e-8:
+        return np.array(seg_a, dtype=float), 0.0, 0.0
+    t = float(np.dot(point - seg_a, ab) / ab_len2)
+    t = float(np.clip(t, 0.0, 1.0))
+    closest = seg_a + t * ab
+    length = math.sqrt(ab_len2)
+    l_pos = t * length
+    return np.array(closest, dtype=float), l_pos, length
+
 def clip_to_bounds(pos, space, margin):
     x_min = getattr(space, "x_min", 0.0)
     y_min = getattr(space, "y_min", 0.0)
@@ -123,10 +138,26 @@ def push_target_to_far_side(target, cur, dir_in, h, slope, delta, max_steps, spa
 
 class SharedParams:
     "_shared: Common human-related parameters shared between Human and ForcefulHuman instances."
-    def __init__(self, in_dest_d, vision, dt):
+    def __init__(self, in_dest_d, vision, dt,
+                 corner_guiding_enable=True,
+                 corner_guiding_kd=3.0,
+                 corner_occ_radius=2.0,
+                 corner_fov_deg=90.0,
+                 corner_guiding_offset=3.0,
+                 corner_occ_nmax_mode="fixed",
+                 corner_occ_nmax_fixed=6,
+                 corner_occ_area_per_person=0.4):
         self.in_dest_d = in_dest_d
         self.vision = vision
         self.dt = dt
+        self.corner_guiding_enable = corner_guiding_enable
+        self.corner_guiding_kd = corner_guiding_kd
+        self.corner_occ_radius = corner_occ_radius
+        self.corner_fov_deg = corner_fov_deg
+        self.corner_guiding_offset = corner_guiding_offset
+        self.corner_occ_nmax_mode = corner_occ_nmax_mode
+        self.corner_occ_nmax_fixed = corner_occ_nmax_fixed
+        self.corner_occ_area_per_person = corner_occ_area_per_person
 
 
 class Human(mesa.Agent):
@@ -173,6 +204,9 @@ class Human(mesa.Agent):
         self.target_pos = None
         self._entered_gate = False
         self._needs_reroute_from_share = False
+        self.corner_guiding_key = None
+        self.corner_guiding_l = None
+        self.corner_guiding_debug_steps = 0
         ######################
 
     @property
@@ -188,7 +222,15 @@ class Human(mesa.Agent):
         return self.model.dests[self.route[self.route_idx]]
 
     def get_target_pos(self):
+        turn_context = self._get_turn_context(self.route_idx)
+        if turn_context is not None and self._shared.corner_guiding_enable:
+            cur, dir_in, dir_out, slope, corner_name = turn_context
+            return self._corner_guiding_target(cur, dir_in, dir_out, slope, corner_name)
+        self._reset_corner_guiding_state()
         return self.aim_pos if self.aim_pos is not None else self.cur_dest
+
+    def update_target_pos_from_route(self):
+        return self.update_aim_pos_from_route()
 
     # scatter-dest
     def update_aim_pos_from_route(self):
@@ -202,7 +244,7 @@ class Human(mesa.Agent):
                   f"aim={self.aim_pos} state={self.re_route_state.name}")
         turn_context = self._get_turn_context(self.route_idx)
         if turn_context is not None:
-            cur, dir_in, slope, _ = turn_context
+            cur, dir_in, _, slope, _ = turn_context
             self.aim_pos = push_target_to_far_side(
                 self.aim_pos, cur, dir_in,
                 ROAD_HALF_WIDTH, slope, DELTA_GATE, MAX_GATE_PUSH, self.space)
@@ -221,7 +263,7 @@ class Human(mesa.Agent):
             return None
         corner_name, _ = choose_inner_corner(np.array(cur, dtype=float), dir_in, dir_out, ROAD_HALF_WIDTH)
         slope = slope_from_corner(corner_name)
-        return np.array(cur, dtype=float), dir_in, slope, corner_name
+        return np.array(cur, dtype=float), dir_in, dir_out, slope, corner_name
 
     def set_up_initial_route(self):
         self.route, self.dest = self.model.select_first_subgoal(self)
@@ -270,7 +312,7 @@ class Human(mesa.Agent):
     def goal_check(self, dest_dis):
         turn_context = self._get_turn_context(self.route_idx)
         if turn_context is not None:
-            cur, dir_in, slope, _ = turn_context
+            cur, dir_in, _, slope, _ = turn_context
             if crossed_midline(self.pos, cur, dir_in, ROAD_HALF_WIDTH, slope):
                 if len(self.route) == self.route_idx + 1:
                     self.in_goal = True
@@ -355,6 +397,94 @@ class Human(mesa.Agent):
             if self.re_route_state == RouteState.NORMAL:
                 self.re_route_state = RouteState.KNOWN
             self._needs_reroute_from_share = True
+
+    def _reset_corner_guiding_state(self):
+        if self.corner_guiding_key is not None:
+            self.corner_guiding_key = None
+            self.corner_guiding_l = None
+            self.corner_guiding_debug_steps = 0
+
+    def _guiding_line_segment(self, cur, dir_out, half_width):
+        offset = self._shared.corner_guiding_offset  # corner_guiding_offset: guiding line center ahead of junction
+        center = np.array(cur, dtype=float) + np.array(dir_out, dtype=float) * offset
+        normal = rot90(dir_out)
+        seg_a = center - normal * half_width
+        seg_b = center + normal * half_width
+        seg_a = clip_to_bounds(seg_a, self.space, CLIP_MARGIN)
+        seg_b = clip_to_bounds(seg_b, self.space, CLIP_MARGIN)
+        return seg_a, seg_b
+
+    def _corner_occ_rel(self, seg_a, seg_b, heading):
+        # corner_occ_radius/corner_fov_deg: occupancy evaluation scope for corner guiding
+        occ_radius = self._shared.corner_occ_radius
+        fov_rad = math.radians(self._shared.corner_fov_deg)
+        heading_vec = np.array(heading, dtype=float)
+        heading_norm = float(np.linalg.norm(heading_vec))
+        if heading_norm > 1e-6:
+            heading_vec /= heading_norm
+        neighbors = self.model.space.get_neighbors(self.pos, occ_radius, False)
+        roi_half_width = ROAD_HALF_WIDTH
+        count = 0
+        cos_limit = math.cos(fov_rad)
+        for neighbor in neighbors:
+            if neighbor.unique_id == self.unique_id:
+                continue
+            if not isinstance(neighbor, Human):
+                continue
+            vec = neighbor.pos - self.pos
+            vec_norm = float(np.linalg.norm(vec))
+            if vec_norm < 1e-8:
+                continue
+            if heading_norm > 1e-6:
+                vec_unit = vec / vec_norm
+                if float(np.dot(heading_vec, vec_unit)) < cos_limit:
+                    continue
+            closest, _, _ = segment_closest_point(neighbor.pos, seg_a, seg_b)
+            if float(np.linalg.norm(neighbor.pos - closest)) <= roi_half_width:
+                count += 1
+        if self._shared.corner_occ_nmax_mode == "area":
+            line_length = float(np.linalg.norm(seg_b - seg_a))
+            area = line_length * (roi_half_width * 2.0)
+            area_per_person = max(self._shared.corner_occ_area_per_person, 1e-6)
+            nmax = max(1.0, area / area_per_person)
+        else:
+            nmax = max(1.0, float(self._shared.corner_occ_nmax_fixed))
+        occ_rel = min(1.0, count / nmax)
+        return occ_rel, count, nmax
+
+    def _corner_guiding_target(self, cur, dir_in, dir_out, slope, corner_name):
+        seg_a, seg_b = self._guiding_line_segment(cur, dir_out, ROAD_HALF_WIDTH)
+        _, corner_pos = choose_inner_corner(np.array(cur, dtype=float), dir_in, dir_out, ROAD_HALF_WIDTH)
+        if np.linalg.norm(seg_a - corner_pos) <= np.linalg.norm(seg_b - corner_pos):
+            inner_end, outer_end = seg_a, seg_b
+        else:
+            inner_end, outer_end = seg_b, seg_a
+        key = (self.route_idx, corner_name)
+        if self.corner_guiding_key != key or self.corner_guiding_l is None:
+            _, l_init, line_length = segment_closest_point(self.pos, inner_end, outer_end)
+            self.corner_guiding_key = key
+            self.corner_guiding_l = l_init
+            self.corner_guiding_debug_steps = getattr(self.model, "debug_corner_guiding_steps", 0)
+        _, _, line_length = segment_closest_point(self.pos, inner_end, outer_end)
+        if line_length < 1e-8:
+            return push_target_to_far_side(
+                np.array(cur, dtype=float), cur, dir_in,
+                ROAD_HALF_WIDTH, slope, DELTA_GATE, MAX_GATE_PUSH, self.space)
+        occ_rel, count, nmax = self._corner_occ_rel(inner_end, outer_end, dir_out)
+        # corner_guiding_kd: controls exp(-kd * occ_rel) for guiding line adjustment strength
+        p = math.exp(-self._shared.corner_guiding_kd * occ_rel)
+        self.corner_guiding_l = float(np.clip(self.corner_guiding_l * (1.0 - p), 0.0, line_length))
+        l_rel = self.corner_guiding_l / line_length
+        target = inner_end + (self.corner_guiding_l / line_length) * (outer_end - inner_end)
+        target = push_target_to_far_side(
+            target, cur, dir_in,
+            ROAD_HALF_WIDTH, slope, DELTA_GATE, MAX_GATE_PUSH, self.space)
+        if getattr(self.model, "debug_corner_guiding", False) and self.corner_guiding_debug_steps > 0:
+            print(f"[corner-guiding] id={self.unique_id} idx={self.route_idx} "
+                  f"pos={np.round(self.pos, 3)} target={np.round(target, 3)} "
+                  f"occ_rel={occ_rel:.3f} n={count}/{nmax:.1f} p={p:.3f} l_rel={l_rel:.3f}")
+            self.corner_guiding_debug_steps -= 1
+        return target
 
     def make_dir(self, path):
         os.makedirs(f"{path}/Data", exist_ok=True)
