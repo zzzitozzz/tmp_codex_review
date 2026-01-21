@@ -127,6 +127,7 @@ def build_strategy_config(args, f_tau):
         kappa_ff=args.kappa_ff,
         r_ff_scale=args.r_ff_scale,
         alpha=args.alpha,
+        asfm_lambda=args.asfm_lambda,
     )
 
 
@@ -140,6 +141,7 @@ def apply_strategy_shorthand(args):
         "kappa_ff": None,
         "r_ff_scale": None,
         "alpha": None,
+        "asfm_lambda": 0.1,
         "asym_a": None,
         "asym_b": None,
         "asym_k": None,
@@ -168,6 +170,7 @@ def apply_strategy_shorthand(args):
         "kappa_ff": "kappa_ff",
         "r_ff_scale": "r_ff_scale",
         "alpha": "alpha",
+        "asfm_lambda": "asfm_lambda",
     }
     idx = 0
     while idx < len(tokens):
@@ -256,6 +259,8 @@ if __name__ == '__main__':
     parser.add_argument("--f_repul_m_b", type=float, help="強引避難者の壁反発B")
     parser.add_argument("--v0", type=float, default=0.8, help="通常避難者の希望速度係数")
     parser.add_argument("--f_v0", type=float, help="強引避難者の希望速度係数")
+    parser.add_argument("--asfm_lambda", type=float, default=0.1,
+                        help="ASFMの後方反発弱化係数(0-1)")
     parser.add_argument("--share_block_info", action="store_true", help="不通道路情報を共有する")
     parser.add_argument("--forceful_preset", default="baseline",
                         choices=["baseline", "goal_strong", "ff_weak", "asym_fn", "combo"],
