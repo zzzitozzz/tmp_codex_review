@@ -29,7 +29,17 @@ class MoveAgent(mesa.Model):
             csv_plot=False,
             info_share_mode=InfoShareMode.NO_SHARE,
             forceful_preset="baseline",
-            strategy: StrategyConfig | None = None):
+            strategy: StrategyConfig | None = None,
+            corner_guiding_enable=True,
+            corner_guiding_kd=3.0,
+            corner_occ_radius=2.0,
+            corner_fov_deg=90.0,
+            corner_guiding_offset=3.0,
+            corner_occ_nmax_mode="fixed",
+            corner_occ_nmax_fixed=6,
+            corner_occ_area_per_person=0.4,
+            debug_corner_guiding=False,
+            debug_corner_guiding_steps=3):
         super().__init__()
         self.population = population
         self.for_population = for_population
@@ -66,6 +76,16 @@ class MoveAgent(mesa.Model):
         self.info_share_mode = info_share_mode
         self.forceful_preset = forceful_preset
         self.strategy = strategy or StrategyConfig()
+        self.corner_guiding_enable = corner_guiding_enable
+        self.corner_guiding_kd = corner_guiding_kd
+        self.corner_occ_radius = corner_occ_radius
+        self.corner_fov_deg = corner_fov_deg
+        self.corner_guiding_offset = corner_guiding_offset
+        self.corner_occ_nmax_mode = corner_occ_nmax_mode
+        self.corner_occ_nmax_fixed = corner_occ_nmax_fixed
+        self.corner_occ_area_per_person = corner_occ_area_per_person
+        self.debug_corner_guiding = debug_corner_guiding
+        self.debug_corner_guiding_steps = debug_corner_guiding_steps
         self.max_steps = 1500
         self.log_capacity = self.max_steps + 1
         self.num_agents = self.population + self.for_population
@@ -74,7 +94,19 @@ class MoveAgent(mesa.Model):
         self.state_log = np.zeros(
             (self.log_capacity, self.num_agents), dtype=np.int8)
         self.goal_reached_step = np.full(self.num_agents, -1, dtype=np.int32)
-        shared = SharedParams(self.in_dest_d, self.vision, self.dt)
+        shared = SharedParams(
+            self.in_dest_d,
+            self.vision,
+            self.dt,
+            corner_guiding_enable=self.corner_guiding_enable,
+            corner_guiding_kd=self.corner_guiding_kd,
+            corner_occ_radius=self.corner_occ_radius,
+            corner_fov_deg=self.corner_fov_deg,
+            corner_guiding_offset=self.corner_guiding_offset,
+            corner_occ_nmax_mode=self.corner_occ_nmax_mode,
+            corner_occ_nmax_fixed=self.corner_occ_nmax_fixed,
+            corner_occ_area_per_person=self.corner_occ_area_per_person,
+        )
         self.agent_params_by_trait, self.pair_params_table = build_sfm_params(
             self.human_var,
             self.forceful_human_var,
