@@ -42,6 +42,8 @@ CORNER_CONGESTION_ON = 8
 CORNER_CONGESTION_OFF = 5
 CORNER_OFFSET = 0.6
 CROWD_GATE_DELTA = 0.5
+CORNER_SPEED_ALPHA = 0.2
+CORNER_SPEED_SCALE = 0.5
 
 def axis_dir(a, b):
     delta = np.array(b) - np.array(a)
@@ -201,6 +203,8 @@ class Human(mesa.Agent):
         self._corner_in_area = False
         self._corner_congested = False
         self._corner_mode = None
+        self.speed_scale = 1.0
+        self.congested_state = False
         ######################
 
     @property
@@ -283,15 +287,17 @@ class Human(mesa.Agent):
         self._corner_in_area = False
         self._corner_congested = False
         self._corner_mode = None
+        self.congested_state = False
 
     def _update_corner_congestion(self, count):
-        if self._corner_congested:
+        if self.congested_state:
             if count <= CORNER_CONGESTION_OFF:
-                self._corner_congested = False
+                self.congested_state = False
         else:
             if count >= CORNER_CONGESTION_ON:
-                self._corner_congested = True
-        return self._corner_congested
+                self.congested_state = True
+        self._corner_congested = self.congested_state
+        return self.congested_state
 
     def _build_crowded_corner_target(self, cur, corner_pos, dir_in, slope):
         u_mid = midline_unit_from_corner(cur, corner_pos, slope)
@@ -336,6 +342,26 @@ class Human(mesa.Agent):
         self.aim_pos = target
         return None
 
+    def _update_corner_speed_scale(self):
+        detail = self._get_turn_detail(self.route_idx)
+        if detail is None:
+            self.congested_state = False
+            target = 1.0
+        else:
+            _, cur, _, _, _, _, _, _ = detail
+            cur_node_id = self.route[self.route_idx]
+            in_corner = is_in_corner_area(self.pos, cur, ROAD_HALF_WIDTH, CORNER_MARGIN)
+            if in_corner:
+                count = self.model.corner_counts.get(cur_node_id, 0)
+                congested = self._update_corner_congestion(count)
+                target = CORNER_SPEED_SCALE if congested else 1.0
+            else:
+                self.congested_state = False
+                self._corner_congested = False
+                target = 1.0
+        self.speed_scale = (1.0 - CORNER_SPEED_ALPHA) * self.speed_scale + CORNER_SPEED_ALPHA * target
+        return None
+
     def set_up_initial_route(self):
         self.route, self.dest = self.model.select_first_subgoal(self)
         self.route_idx = 0
@@ -350,6 +376,7 @@ class Human(mesa.Agent):
             self.last_reroute_time = self.elapsed_time
             self._needs_reroute_from_share = False
         self._update_corner_target_if_needed()
+        self._update_corner_speed_scale()
         self._calculate()
         if self.is_forceful:
             dest_dis = self.space.get_distance(self.pos, self.get_target_pos())
@@ -524,8 +551,9 @@ class Human(mesa.Agent):
         return fx, fy
 
     def force_from_goal(self, theta):
-        fx = self.hspecs.m * (self.hspecs.v0 * theta[0] - self.velocity[0]) / self.hspecs.tau
-        fy = self.hspecs.m * (self.hspecs.v0 * theta[1] - self.velocity[1]) / self.hspecs.tau
+        v0_eff = self.hspecs.v0 * self.speed_scale
+        fx = self.hspecs.m * (v0_eff * theta[0] - self.velocity[0]) / self.hspecs.tau
+        fy = self.hspecs.m * (v0_eff * theta[1] - self.velocity[1]) / self.hspecs.tau
         return fx, fy
 
     def force_from_human(self, neighbor):
