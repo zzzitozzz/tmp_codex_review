@@ -267,12 +267,18 @@ class Human(mesa.Agent):
         return cur, dir_in, slope, corner_name
 
     def _get_turn_detail(self, route_idx):
-        if route_idx <= 0 or route_idx + 1 >= len(self.route):
+        if route_idx + 1 >= len(self.route):
             return None
-        prev = np.array(self.model.dests[self.route[route_idx - 1]], dtype=float)
         cur = np.array(self.model.dests[self.route[route_idx]], dtype=float)
         nxt = np.array(self.model.dests[self.route[route_idx + 1]], dtype=float)
-        dir_in = axis_dir(prev, cur)
+        if route_idx <= 0:
+            dir_in = axis_dir(self.pos, cur)
+            if np.allclose(dir_in, 0.0):
+                dir_in = axis_dir(cur, nxt)
+            prev = np.array(cur, dtype=float)
+        else:
+            prev = np.array(self.model.dests[self.route[route_idx - 1]], dtype=float)
+            dir_in = axis_dir(prev, cur)
         dir_out = axis_dir(cur, nxt)
         turn = get_turn(dir_in, dir_out)
         if turn == Turn.STRAIGHT:
