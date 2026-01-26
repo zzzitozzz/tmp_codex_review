@@ -204,7 +204,6 @@ class Human(mesa.Agent):
         self._corner_in_area = False
         self._corner_congested = False
         self._corner_mode = None
-        self._dir_in0 = None
         self.speed_scale = 1.0
         self.congested_state = False
         ######################
