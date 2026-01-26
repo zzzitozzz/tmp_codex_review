@@ -4,6 +4,7 @@ import sys
 import warnings
 import copy
 from datetime import datetime
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -16,6 +17,18 @@ from agent import (SharedParams, Human, Wall, RouteState, InfoShareMode,
                    is_in_corner_area)
 from params import Trait, StrategyConfig, build_sfm_params
 warnings.simplefilter('ignore', UserWarning)
+
+@dataclass(frozen=True)
+class Rect:
+    x_min: float
+    x_max: float
+    y_min: float
+    y_max: float
+
+    def contains(self, pos) -> bool:
+        x = float(pos[0])
+        y = float(pos[1])
+        return self.x_min <= x <= self.x_max and self.y_min <= y <= self.y_max
 
 
 class MoveAgent(mesa.Model):
@@ -31,7 +44,8 @@ class MoveAgent(mesa.Model):
             csv_plot=False,
             info_share_mode=InfoShareMode.NO_SHARE,
             forceful_preset="baseline",
-            strategy: StrategyConfig | None = None):
+            strategy: StrategyConfig | None = None,
+            goals=None):
         super().__init__()
         self.population = population
         self.for_population = for_population
@@ -39,6 +53,7 @@ class MoveAgent(mesa.Model):
         self.edges = edges
         self.dead_edges = dead_edges
         self.goal_arr = goal_arr
+        self.goals = goals or {}
         self.v_arg = v_arg
         self.wall_arr = wall_arr
         self.dead_wall_arr = dead_wall_arr

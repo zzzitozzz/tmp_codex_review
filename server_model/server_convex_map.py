@@ -1,5 +1,5 @@
 import sys
-from model import MoveAgent
+from model import MoveAgent, Rect
 
 import numpy as np
 from dataclasses import dataclass
@@ -187,7 +187,7 @@ def apply_strategy_shorthand(args):
 
 
 def make_new_model_instance(human_var, forceful_human_var, wall_arr, pop_num, for_pop, dests, edges,
-                            goal_arr, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
+                            goal_arr, goals, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
                             share_block_info=False, forceful_preset="baseline", strategy=None):
     ex_num = 1 # force_tau
     # if csv_plot:
@@ -207,6 +207,7 @@ def make_new_model_instance(human_var, forceful_human_var, wall_arr, pop_num, fo
         dests=dests,
         edges=edges,
         goal_arr=goal_arr,
+        goals=goals,
         v_arg=[1., 1.],
         wall_arr=wall_arr,
         seed=tmp_seed,  # 乱数生成用
@@ -285,9 +286,13 @@ if __name__ == '__main__':
     dests = [[9, 33], [19, 33], [19, 4], [54, 33]]
     edges = {0: [1], 1: [0, 2, 3], 2: [1], 3: [1]} # ノードの接続情報
     goal_arr = [3, 2] # ゴールのインデックス(通常，強引)
+    goals = {
+        "normal": Rect(52.5, 54.0, 26.0, 40.0),
+        "forceful": Rect(16.0, 22.0, 4.0, 5.5),
+    }
     while 1:
         m = make_new_model_instance(
-            human_var, forceful_human_var, wall_arr, pop_num, for_pop, dests, edges, goal_arr, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
+            human_var, forceful_human_var, wall_arr, pop_num, for_pop, dests, edges, goal_arr, goals, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
             share_block_info=share_block_info, forceful_preset=args.forceful_preset, strategy=strategy)
         m.running = True
         while m.running:

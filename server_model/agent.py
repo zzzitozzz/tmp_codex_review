@@ -181,6 +181,7 @@ class Human(mesa.Agent):
         self.can_become_forceful = can_become_forceful
         self.forceful_trait = forceful_initial
         self.is_forceful = forceful_initial if is_forceful is None else is_forceful
+        self.role = "forceful" if self.is_forceful else "normal"
         self.tmp_div = tmp_div #特定の人同士の反発力の大きさを除算もしくは乗算する値
         self.space = space #エージェントが動き回る空間を管理するモジュール
         self.add_file_name = add_file_name #保存するファイル名(の基礎.最終的には絶対パスまたは相対パスができる)
@@ -422,8 +423,21 @@ class Human(mesa.Agent):
         else:
             self.model.space.move_agent(self, self.pos)  # goalしていない場合
         return None
+
+    def _goal_region_contains(self):
+        goals = getattr(self.model, "goals", None)
+        if not goals:
+            return False
+        goal = goals.get(self.role)
+        if goal is None:
+            return False
+        return goal.contains(self.pos)
     
     def goal_check(self, dest_dis):
+        if self._goal_region_contains():
+            self.in_goal = True
+            self.velocity = [0.0, 0.0]
+            return None
         turn_context = self._get_turn_context(self.route_idx)
         if turn_context is not None:
             cur, dir_in, slope, _ = turn_context

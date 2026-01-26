@@ -1,5 +1,5 @@
 import sys
-from model import MoveAgent
+from model import MoveAgent, Rect
 
 import numpy as np
 from dataclasses import dataclass, field
@@ -217,7 +217,7 @@ def apply_strategy_shorthand(args):
 
 
 def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges, dead_edges,
-                            goal_arr, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
+                            goal_arr, goals, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
                             share_block_info=False, forceful_preset="baseline", strategy=None):
     ex_num = 1 # force_tau
     # if csv_plot:
@@ -238,6 +238,7 @@ def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_a
         edges=edges,
         dead_edges=dead_edges,
         goal_arr=goal_arr,
+        goals=goals,
         v_arg=[1., 1.],
         wall_arr=wall_arr,
         dead_wall_arr=dead_wall_arr,
@@ -346,10 +347,14 @@ if __name__ == '__main__':
                         [[118.0, 38.0], [118.0, 44.0]], [[122.0, 38.0], [122.0, 44.0]]
                         ])
     goal_arr = [7, 7] # ゴールのインデックス(通常，強引)
+    goals = {
+        "normal": Rect(150.0, 156.0, 38.0, 44.0),
+        "forceful": Rect(150.0, 156.0, 38.0, 44.0),
+    }
     while 1:
         m = make_new_model_instance(
             human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges, dead_edges,
-            goal_arr, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
+            goal_arr, goals, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
             share_block_info=share_block_info, forceful_preset=args.forceful_preset, strategy=strategy)
         m.running = True
         while m.running:
