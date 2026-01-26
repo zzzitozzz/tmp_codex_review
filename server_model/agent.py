@@ -176,6 +176,7 @@ class Human(mesa.Agent):
         self.pos = np.array(pos)
         self.velocity = velocity
         self._shared = shared
+        self.init_pos = self.pos.copy()
         self.forceful_initial = forceful_initial
         self.can_become_forceful = can_become_forceful
         self.forceful_trait = forceful_initial
@@ -203,6 +204,7 @@ class Human(mesa.Agent):
         self._corner_in_area = False
         self._corner_congested = False
         self._corner_mode = None
+        self._dir_in0 = None
         self.speed_scale = 1.0
         self.congested_state = False
         ######################
@@ -272,11 +274,15 @@ class Human(mesa.Agent):
         cur = np.array(self.model.dests[self.route[route_idx]], dtype=float)
         nxt = np.array(self.model.dests[self.route[route_idx + 1]], dtype=float)
         if route_idx <= 0:
-            dir_in = axis_dir(self.pos, cur)
-            if np.allclose(dir_in, 0.0):
-                dir_in = axis_dir(cur, nxt)
+            if self._dir_in0 is None:
+                dir_in = axis_dir(self.init_pos, cur)
+                if np.allclose(dir_in, 0.0):
+                    dir_in = axis_dir(cur, nxt)
+                self._dir_in0 = dir_in
+            dir_in = self._dir_in0
             prev = np.array(cur, dtype=float)
         else:
+            self._dir_in0 = None
             prev = np.array(self.model.dests[self.route[route_idx - 1]], dtype=float)
             dir_in = axis_dir(prev, cur)
         dir_out = axis_dir(cur, nxt)
