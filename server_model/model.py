@@ -11,7 +11,9 @@ import yaml
 import heapq
 import math
 
-from agent import SharedParams, Human, Wall, RouteState, InfoShareMode, BlockInfoState
+from agent import (SharedParams, Human, Wall, RouteState, InfoShareMode,
+                   BlockInfoState, ROAD_HALF_WIDTH, CORNER_MARGIN,
+                   is_in_corner_area)
 from params import Trait, StrategyConfig, build_sfm_params
 warnings.simplefilter('ignore', UserWarning)
 
@@ -74,6 +76,7 @@ class MoveAgent(mesa.Model):
         self.state_log = np.zeros(
             (self.log_capacity, self.num_agents), dtype=np.int8)
         self.goal_reached_step = np.full(self.num_agents, -1, dtype=np.int32)
+        self.corner_counts = {}
         shared = SharedParams(self.in_dest_d, self.vision, self.dt)
         self.agent_params_by_trait, self.pair_params_table = build_sfm_params(
             self.human_var,
@@ -474,6 +477,7 @@ class MoveAgent(mesa.Model):
 
 
     def step(self):
+        self.update_corner_counts()
         # Phase 1: 行動
         self.schedule.step()
         next_step_idx = self.time_step + 1
@@ -501,6 +505,21 @@ class MoveAgent(mesa.Model):
         if self.time_step >= self.max_steps: 
             self.timeout_check()
             self.running = False
+
+    def update_corner_counts(self):
+        counts = {}
+        for agent in list(self.schedule.agents):
+            if not isinstance(agent, Human):
+                continue
+            detail = agent._get_turn_detail(agent.route_idx)
+            if detail is None:
+                continue
+            _, cur, _, _, _, _, _, _ = detail
+            if not is_in_corner_area(agent.pos, cur, ROAD_HALF_WIDTH, CORNER_MARGIN):
+                continue
+            cur_node_id = agent.route[agent.route_idx]
+            counts[cur_node_id] = counts.get(cur_node_id, 0) + 1
+        self.corner_counts = counts
 
     def all_agent_evacuate(self):
         return len(self.schedule.agents) == 0
