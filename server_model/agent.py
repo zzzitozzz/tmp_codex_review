@@ -377,6 +377,8 @@ class Human(mesa.Agent):
     def set_up_initial_route(self):
         self.route, self.dest = self.model.select_first_subgoal(self)
         self.route_idx = 0
+        self.init_pos = self.pos.copy()
+        self._dir_in0 = None
         self.update_target_pos_from_route()
         return None
     
