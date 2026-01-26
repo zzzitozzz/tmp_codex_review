@@ -384,6 +384,8 @@ class Human(mesa.Agent):
         if self._needs_reroute_from_share:
             self.route, self.dest = self.model.select_first_subgoal(self)
             self.route_idx = 0
+            self.init_pos = self.pos.copy()
+            self._dir_in0 = None
             self.update_target_pos_from_route()
             self.last_reroute_time = self.elapsed_time
             self._needs_reroute_from_share = False
@@ -468,6 +470,8 @@ class Human(mesa.Agent):
         if moved < D_MIN:
             self.route, self.dest = self.model.select_first_subgoal(self)
             self.route_idx = 0
+            self.init_pos = self.pos.copy()
+            self._dir_in0 = None
             self.update_target_pos_from_route()
             self.last_reroute_time = self.elapsed_time
         return None
@@ -484,6 +488,8 @@ class Human(mesa.Agent):
                 # 不通を考慮した距離木で再ルート
                 self.route, self.dest = self.model.select_first_subgoal(self)
                 self.route_idx = 0
+                self.init_pos = self.pos.copy()
+                self._dir_in0 = None
                 self.update_target_pos_from_route()
                 return True
         return False
