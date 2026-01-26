@@ -35,7 +35,7 @@ class MoveAgent(mesa.Model):
 
     def __init__(
             self, population=100, for_population=1, dests=[], edges=[], dead_edges=[], goal_arr=[], v_arg=[], wall_arr=[[]],
-            dead_wall_arr=[[]],seed=1, r=0.5,
+            dead_wall_arr=None,seed=1, r=0.5,
             wall_r=0.5, human_var={}, forceful_human_var={},
             width=100, height=100, dt=0.1,
             in_dest_d=3, vision=3, time_step=0,
@@ -56,7 +56,7 @@ class MoveAgent(mesa.Model):
         self.goals = goals or {}
         self.v_arg = v_arg
         self.wall_arr = wall_arr
-        self.dead_wall_arr = dead_wall_arr
+        self.dead_wall_arr = np.array([[]]) if dead_wall_arr is None else dead_wall_arr
         ####
         self.wall_a, self.wall_b, self.wall_ab, self.wall_ab_len2 = self.pre_wall_arr(self.wall_arr)
         self.dead_wall_a, self.dead_wall_b, self.dead_wall_ab, self.dead_wall_ab_len2 = self.pre_wall_arr(self.dead_wall_arr)
@@ -339,6 +339,8 @@ class MoveAgent(mesa.Model):
         if state == RouteState.NORMAL:
             return self.wall_arr
         elif state in (RouteState.BLOCKED_WAIT, RouteState.KNOWN):
+            if not self._has_dead_walls():
+                return self.wall_arr
             return np.concatenate([self.wall_arr, self.dead_wall_arr], axis=0)
         return self.wall_arr
 
@@ -400,6 +402,13 @@ class MoveAgent(mesa.Model):
         return self.select_first_subgoal_with_dist(agent, dist_to_goal, next_to_goal)
 
     def pre_wall_arr(self, wall_arr):
+        if wall_arr is None:
+            empty = np.empty((0, 2))
+            return empty, empty, empty, np.array([])
+        wall_arr = np.asarray(wall_arr)
+        if wall_arr.size == 0:
+            empty = np.empty((0, 2))
+            return empty, empty, empty, np.array([])
         wall_a = wall_arr[:, 0]           # 各壁の始点 (N_wall, 2)
         wall_b = wall_arr[:, 1]           # 各壁の終点 (N_wall, 2)
         wall_ab = wall_b - wall_a         # ベクトル (N_wall, 2)
@@ -407,6 +416,15 @@ class MoveAgent(mesa.Model):
         for ab in wall_ab:
             wall_ab_len2 = np.append(wall_ab_len2, np.dot(ab, ab))
         return wall_a, wall_b, wall_ab, wall_ab_len2
+
+    def _has_dead_walls(self):
+        if self.dead_wall_arr is None:
+            return False
+        if hasattr(self.dead_wall_arr, "size") and self.dead_wall_arr.size == 0:
+            return False
+        if hasattr(self.dead_wall_arr, "shape") and self.dead_wall_arr.shape[0] == 0:
+            return False
+        return True
 
     def make_agent_rng(self, agent_id):
         return np.random.default_rng(self.seed + agent_id)

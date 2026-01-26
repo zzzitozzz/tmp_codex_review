@@ -186,7 +186,7 @@ def apply_strategy_shorthand(args):
     return None
 
 
-def make_new_model_instance(human_var, forceful_human_var, wall_arr, pop_num, for_pop, dests, edges,
+def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges,
                             goal_arr, goals, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
                             share_block_info=False, forceful_preset="baseline", strategy=None):
     ex_num = 1 # force_tau
@@ -210,6 +210,7 @@ def make_new_model_instance(human_var, forceful_human_var, wall_arr, pop_num, fo
         goals=goals,
         v_arg=[1., 1.],
         wall_arr=wall_arr,
+        dead_wall_arr=dead_wall_arr,
         seed=tmp_seed,  # 乱数生成用
         r=0.5,  # 避難者の大きさ
         wall_r=1.0,  # うそ壁の大きさß
@@ -282,6 +283,7 @@ if __name__ == '__main__':
                 [[22., 26.], [54., 26.]],
                 [[16., 4.], [16., 26.]],
                 [[22., 4.], [22., 26.]]])
+    dead_wall_arr = np.array([[]])
 
     dests = [[9, 33], [19, 33], [19, 4], [54, 33]]
     edges = {0: [1], 1: [0, 2, 3], 2: [1], 3: [1]} # ノードの接続情報
@@ -292,7 +294,7 @@ if __name__ == '__main__':
     }
     while 1:
         m = make_new_model_instance(
-            human_var, forceful_human_var, wall_arr, pop_num, for_pop, dests, edges, goal_arr, goals, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
+            human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges, goal_arr, goals, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
             share_block_info=share_block_info, forceful_preset=args.forceful_preset, strategy=strategy)
         m.running = True
         while m.running:
