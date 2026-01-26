@@ -42,6 +42,8 @@ CORNER_CONGESTION_ON = 8
 CORNER_CONGESTION_OFF = 5
 CORNER_OFFSET = 0.6
 CROWD_GATE_DELTA = 0.5
+CORNER_SPEED_ALPHA = 0.2
+CORNER_SPEED_SCALE = 0.5
 
 def axis_dir(a, b):
     delta = np.array(b) - np.array(a)
@@ -174,6 +176,7 @@ class Human(mesa.Agent):
         self.pos = np.array(pos)
         self.velocity = velocity
         self._shared = shared
+        self.init_pos = self.pos.copy()
         self.forceful_initial = forceful_initial
         self.can_become_forceful = can_become_forceful
         self.forceful_trait = forceful_initial
@@ -201,6 +204,8 @@ class Human(mesa.Agent):
         self._corner_in_area = False
         self._corner_congested = False
         self._corner_mode = None
+        self.speed_scale = 1.0
+        self.congested_state = False
         ######################
 
     @property
@@ -263,12 +268,22 @@ class Human(mesa.Agent):
         return cur, dir_in, slope, corner_name
 
     def _get_turn_detail(self, route_idx):
-        if route_idx <= 0 or route_idx + 1 >= len(self.route):
+        if route_idx + 1 >= len(self.route):
             return None
-        prev = np.array(self.model.dests[self.route[route_idx - 1]], dtype=float)
         cur = np.array(self.model.dests[self.route[route_idx]], dtype=float)
         nxt = np.array(self.model.dests[self.route[route_idx + 1]], dtype=float)
-        dir_in = axis_dir(prev, cur)
+        if route_idx <= 0:
+            if self._dir_in0 is None:
+                dir_in = axis_dir(self.init_pos, cur)
+                if np.allclose(dir_in, 0.0):
+                    dir_in = axis_dir(cur, nxt)
+                self._dir_in0 = dir_in
+            dir_in = self._dir_in0
+            prev = np.array(cur, dtype=float)
+        else:
+            self._dir_in0 = None
+            prev = np.array(self.model.dests[self.route[route_idx - 1]], dtype=float)
+            dir_in = axis_dir(prev, cur)
         dir_out = axis_dir(cur, nxt)
         turn = get_turn(dir_in, dir_out)
         if turn == Turn.STRAIGHT:
@@ -283,15 +298,17 @@ class Human(mesa.Agent):
         self._corner_in_area = False
         self._corner_congested = False
         self._corner_mode = None
+        self.congested_state = False
 
     def _update_corner_congestion(self, count):
-        if self._corner_congested:
+        if self.congested_state:
             if count <= CORNER_CONGESTION_OFF:
-                self._corner_congested = False
+                self.congested_state = False
         else:
             if count >= CORNER_CONGESTION_ON:
-                self._corner_congested = True
-        return self._corner_congested
+                self.congested_state = True
+        self._corner_congested = self.congested_state
+        return self.congested_state
 
     def _build_crowded_corner_target(self, cur, corner_pos, dir_in, slope):
         u_mid = midline_unit_from_corner(cur, corner_pos, slope)
@@ -336,9 +353,31 @@ class Human(mesa.Agent):
         self.aim_pos = target
         return None
 
+    def _update_corner_speed_scale(self):
+        detail = self._get_turn_detail(self.route_idx)
+        if detail is None:
+            self.congested_state = False
+            target = 1.0
+        else:
+            _, cur, _, _, _, _, _, _ = detail
+            cur_node_id = self.route[self.route_idx]
+            in_corner = is_in_corner_area(self.pos, cur, ROAD_HALF_WIDTH, CORNER_MARGIN)
+            if in_corner:
+                count = self.model.corner_counts.get(cur_node_id, 0)
+                congested = self._update_corner_congestion(count)
+                target = CORNER_SPEED_SCALE if congested else 1.0
+            else:
+                self.congested_state = False
+                self._corner_congested = False
+                target = 1.0
+        self.speed_scale = (1.0 - CORNER_SPEED_ALPHA) * self.speed_scale + CORNER_SPEED_ALPHA * target
+        return None
+
     def set_up_initial_route(self):
         self.route, self.dest = self.model.select_first_subgoal(self)
         self.route_idx = 0
+        self.init_pos = self.pos.copy()
+        self._dir_in0 = None
         self.update_target_pos_from_route()
         return None
     
@@ -346,10 +385,13 @@ class Human(mesa.Agent):
         if self._needs_reroute_from_share:
             self.route, self.dest = self.model.select_first_subgoal(self)
             self.route_idx = 0
+            self.init_pos = self.pos.copy()
+            self._dir_in0 = None
             self.update_target_pos_from_route()
             self.last_reroute_time = self.elapsed_time
             self._needs_reroute_from_share = False
         self._update_corner_target_if_needed()
+        self._update_corner_speed_scale()
         self._calculate()
         if self.is_forceful:
             dest_dis = self.space.get_distance(self.pos, self.get_target_pos())
@@ -429,6 +471,8 @@ class Human(mesa.Agent):
         if moved < D_MIN:
             self.route, self.dest = self.model.select_first_subgoal(self)
             self.route_idx = 0
+            self.init_pos = self.pos.copy()
+            self._dir_in0 = None
             self.update_target_pos_from_route()
             self.last_reroute_time = self.elapsed_time
         return None
@@ -445,6 +489,8 @@ class Human(mesa.Agent):
                 # 不通を考慮した距離木で再ルート
                 self.route, self.dest = self.model.select_first_subgoal(self)
                 self.route_idx = 0
+                self.init_pos = self.pos.copy()
+                self._dir_in0 = None
                 self.update_target_pos_from_route()
                 return True
         return False
@@ -524,8 +570,9 @@ class Human(mesa.Agent):
         return fx, fy
 
     def force_from_goal(self, theta):
-        fx = self.hspecs.m * (self.hspecs.v0 * theta[0] - self.velocity[0]) / self.hspecs.tau
-        fy = self.hspecs.m * (self.hspecs.v0 * theta[1] - self.velocity[1]) / self.hspecs.tau
+        v0_eff = self.hspecs.v0 * self.speed_scale
+        fx = self.hspecs.m * (v0_eff * theta[0] - self.velocity[0]) / self.hspecs.tau
+        fy = self.hspecs.m * (v0_eff * theta[1] - self.velocity[1]) / self.hspecs.tau
         return fx, fy
 
     def force_from_human(self, neighbor):
