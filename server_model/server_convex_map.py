@@ -12,8 +12,8 @@ class InitPosFuncs:
 
     def decide_position(self, rng, r, f_r, human_array):
         while 1:
-            x = rng.randint(4, 34) + rng.rand()
-            y = rng.randint(26, 40) + rng.rand() #初期配置(未確定)
+            x = rng.uniform(4, 34)
+            y = rng.uniform(26, 40) #初期配置(未確定)
             if 4. + r * 2 <= x <= 34. - r * 2 and 26. + r * 2 <= y <= 40. - r * 2:
                 tmp_pos = np.array((x, y))
                 if self.human_pos_check(r, f_r, tmp_pos, human_array): #ボジションチェック(既存のエージェントの位置と被っていないか)
@@ -24,10 +24,8 @@ class InitPosFuncs:
     def decide_forceful_position(self, rng, r, f_r, human_array):
         len_sq = 3 # 初期エリア：ただし長方形の一辺の長さはlen_sq*2
         while 1:
-            x = rng.randint(19. - len_sq, 19. +
-                                    len_sq) + rng.rand()
-            y = rng.randint(32.5 - len_sq, 32.5 +
-                                    len_sq) + rng.rand()
+            x = rng.uniform(19. - len_sq, 19. + len_sq)
+            y = rng.uniform(32.5 - len_sq, 32.5 + len_sq)
             if 19.- len_sq + r <= x <= 19.+ len_sq - r and 32.5- len_sq + r <= y <= 32.5+ len_sq - r:
                 tmp_pos = np.array((x, y))
                 if self.forceful_human_pos_check(r, f_r, tmp_pos, human_array):
