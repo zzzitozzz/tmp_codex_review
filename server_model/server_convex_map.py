@@ -1,5 +1,5 @@
 import sys
-from model import MoveAgent
+from model import MoveAgent, Rect
 
 import numpy as np
 from dataclasses import dataclass
@@ -10,10 +10,10 @@ from params import StrategyConfig
 class InitPosFuncs:
     f_r_use: bool = False # True: 常に強引な避難者の半径を使用 False: 普段は強引な避難者も通常の避難者と同じ半径を使用
 
-    def decide_position(self, r, f_r, human_array):
+    def decide_position(self, rng, r, f_r, human_array):
         while 1:
-            x = np.random.randint(4, 34) + np.random.rand()
-            y = np.random.randint(26, 40) + np.random.rand() #初期配置(未確定)
+            x = rng.uniform(4, 34)
+            y = rng.uniform(26, 40) #初期配置(未確定)
             if 4. + r * 2 <= x <= 34. - r * 2 and 26. + r * 2 <= y <= 40. - r * 2:
                 tmp_pos = np.array((x, y))
                 if self.human_pos_check(r, f_r, tmp_pos, human_array): #ボジションチェック(既存のエージェントの位置と被っていないか)
@@ -21,13 +21,11 @@ class InitPosFuncs:
                     break
         return pos
 
-    def decide_forceful_position(self, r, f_r, human_array):
+    def decide_forceful_position(self, rng, r, f_r, human_array):
         len_sq = 3 # 初期エリア：ただし長方形の一辺の長さはlen_sq*2
         while 1:
-            x = np.random.randint(19. - len_sq, 19. +
-                                    len_sq) + np.random.rand()
-            y = np.random.randint(32.5 - len_sq, 32.5 +
-                                    len_sq) + np.random.rand()
+            x = rng.uniform(19. - len_sq, 19. + len_sq)
+            y = rng.uniform(32.5 - len_sq, 32.5 + len_sq)
             if 19.- len_sq + r <= x <= 19.+ len_sq - r and 32.5- len_sq + r <= y <= 32.5+ len_sq - r:
                 tmp_pos = np.array((x, y))
                 if self.forceful_human_pos_check(r, f_r, tmp_pos, human_array):
@@ -186,8 +184,8 @@ def apply_strategy_shorthand(args):
     return None
 
 
-def make_new_model_instance(human_var, forceful_human_var, wall_arr, pop_num, for_pop, dests, edges,
-                            goal_arr, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
+def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges,
+                            goal_arr, goals, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
                             share_block_info=False, forceful_preset="baseline", strategy=None):
     ex_num = 1 # force_tau
     # if csv_plot:
@@ -207,8 +205,10 @@ def make_new_model_instance(human_var, forceful_human_var, wall_arr, pop_num, fo
         dests=dests,
         edges=edges,
         goal_arr=goal_arr,
+        goals=goals,
         v_arg=[1., 1.],
         wall_arr=wall_arr,
+        dead_wall_arr=dead_wall_arr,
         seed=tmp_seed,  # 乱数生成用
         r=0.5,  # 避難者の大きさ
         wall_r=1.0,  # うそ壁の大きさß
@@ -281,13 +281,18 @@ if __name__ == '__main__':
                 [[22., 26.], [54., 26.]],
                 [[16., 4.], [16., 26.]],
                 [[22., 4.], [22., 26.]]])
+    dead_wall_arr = np.array([[]])
 
     dests = [[9, 33], [19, 33], [19, 4], [54, 33]]
     edges = {0: [1], 1: [0, 2, 3], 2: [1], 3: [1]} # ノードの接続情報
     goal_arr = [3, 2] # ゴールのインデックス(通常，強引)
+    goals = {
+        "normal": Rect(52.5, 54.0, 26.0, 40.0),
+        "forceful": Rect(16.0, 22.0, 4.0, 5.5),
+    }
     while 1:
         m = make_new_model_instance(
-            human_var, forceful_human_var, wall_arr, pop_num, for_pop, dests, edges, goal_arr, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
+            human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges, goal_arr, goals, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
             share_block_info=share_block_info, forceful_preset=args.forceful_preset, strategy=strategy)
         m.running = True
         while m.running:
