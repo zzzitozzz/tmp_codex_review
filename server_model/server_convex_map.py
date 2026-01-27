@@ -1,20 +1,23 @@
 import sys
-from model import MoveAgent, Rect
+from model import MoveAgent
 
 import numpy as np
 from dataclasses import dataclass
 from agent import SharedParams, Human, Wall, InfoShareMode
 from params import StrategyConfig
+from maps.convex_config import CONVEX_MAP_CONFIG
 
 @dataclass
 class InitPosFuncs:
+    config: object
     f_r_use: bool = False # True: 常に強引な避難者の半径を使用 False: 普段は強引な避難者も通常の避難者と同じ半径を使用
 
     def decide_position(self, rng, r, f_r, human_array):
+        rect = self.config.spawn["normal"]
         while 1:
-            x = rng.uniform(4, 34)
-            y = rng.uniform(26, 40) #初期配置(未確定)
-            if 4. + r * 2 <= x <= 34. - r * 2 and 26. + r * 2 <= y <= 40. - r * 2:
+            x = rng.uniform(rect.x_min, rect.x_max)
+            y = rng.uniform(rect.y_min, rect.y_max) #初期配置(未確定)
+            if rect.x_min + r * 2 <= x <= rect.x_max - r * 2 and rect.y_min + r * 2 <= y <= rect.y_max - r * 2:
                 tmp_pos = np.array((x, y))
                 if self.human_pos_check(r, f_r, tmp_pos, human_array): #ボジションチェック(既存のエージェントの位置と被っていないか)
                     pos = tmp_pos
@@ -22,11 +25,11 @@ class InitPosFuncs:
         return pos
 
     def decide_forceful_position(self, rng, r, f_r, human_array):
-        len_sq = 3 # 初期エリア：ただし長方形の一辺の長さはlen_sq*2
+        rect = self.config.spawn["forceful"]
         while 1:
-            x = rng.uniform(19. - len_sq, 19. + len_sq)
-            y = rng.uniform(32.5 - len_sq, 32.5 + len_sq)
-            if 19.- len_sq + r <= x <= 19.+ len_sq - r and 32.5- len_sq + r <= y <= 32.5+ len_sq - r:
+            x = rng.uniform(rect.x_min, rect.x_max)
+            y = rng.uniform(rect.y_min, rect.y_max)
+            if rect.x_min + r <= x <= rect.x_max - r and rect.y_min + r <= y <= rect.y_max - r:
                 tmp_pos = np.array((x, y))
                 if self.forceful_human_pos_check(r, f_r, tmp_pos, human_array):
                     pos = tmp_pos
@@ -186,7 +189,7 @@ def apply_strategy_shorthand(args):
 
 def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges,
                             goal_arr, goals, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
-                            share_block_info=False, forceful_preset="baseline", strategy=None):
+                            share_block_info=False, forceful_preset="baseline", strategy=None, config=None):
     ex_num = 1 # force_tau
     # if csv_plot:
     #     file_name_array = [
@@ -228,7 +231,8 @@ def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_a
         csv_plot=csv_plot,
         info_share_mode=InfoShareMode.SHARE_BLOCKED_ROAD if share_block_info else InfoShareMode.NO_SHARE,
         forceful_preset=forceful_preset,
-        strategy=strategy)
+        strategy=strategy,
+        config=config)
     return m
 
 
@@ -275,7 +279,8 @@ if __name__ == '__main__':
     # max_f_r = 1.01
     human_var, forceful_human_var = build_sfm_vars(args, f_tau)
     strategy = build_strategy_config(args, f_tau)
-    pos_func = InitPosFuncs()
+    config = CONVEX_MAP_CONFIG
+    pos_func = InitPosFuncs(config=config)
     wall_arr = np.array([[[2., 40.], [54., 40.]],
                 [[2., 26.], [16., 26.]],
                 [[22., 26.], [54., 26.]],
@@ -286,14 +291,11 @@ if __name__ == '__main__':
     dests = [[9, 33], [19, 33], [19, 4], [54, 33]]
     edges = {0: [1], 1: [0, 2, 3], 2: [1], 3: [1]} # ノードの接続情報
     goal_arr = [3, 2] # ゴールのインデックス(通常，強引)
-    goals = {
-        "normal": Rect(52.5, 54.0, 26.0, 40.0),
-        "forceful": Rect(16.0, 22.0, 4.0, 5.5),
-    }
+    goals = config.goals
     while 1:
         m = make_new_model_instance(
             human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges, goal_arr, goals, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
-            share_block_info=share_block_info, forceful_preset=args.forceful_preset, strategy=strategy)
+            share_block_info=share_block_info, forceful_preset=args.forceful_preset, strategy=strategy, config=config)
         m.running = True
         while m.running:
             m.step()

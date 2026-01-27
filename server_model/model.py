@@ -13,8 +13,8 @@ import heapq
 import math
 
 from agent import (SharedParams, Human, Wall, RouteState, InfoShareMode,
-                   BlockInfoState, ROAD_HALF_WIDTH, CORNER_MARGIN,
-                   is_in_corner_area)
+                   BlockInfoState, is_in_corner_area)
+from maps.common_config import DEFAULT_ROAD_WIDTH, TargetParams
 from params import Trait, StrategyConfig, build_sfm_params
 warnings.simplefilter('ignore', UserWarning)
 
@@ -45,7 +45,8 @@ class MoveAgent(mesa.Model):
             info_share_mode=InfoShareMode.NO_SHARE,
             forceful_preset="baseline",
             strategy: StrategyConfig | None = None,
-            goals=None):
+            goals=None,
+            config=None):
         super().__init__()
         self.population = population
         self.for_population = for_population
@@ -54,6 +55,7 @@ class MoveAgent(mesa.Model):
         self.dead_edges = dead_edges
         self.goal_arr = goal_arr
         self.goals = goals or {}
+        self.config = config
         self.v_arg = v_arg
         self.wall_arr = wall_arr
         self.dead_wall_arr = np.array([[]]) if dead_wall_arr is None else dead_wall_arr
@@ -117,6 +119,16 @@ class MoveAgent(mesa.Model):
         print(f"change para: {self.check_f_parameter()}")
         self.make_basic_dir()
         self.save_specs_to_file(shared)
+
+    def get_target_params(self) -> TargetParams:
+        if self.config is None:
+            return TargetParams()
+        return self.config.target_params
+
+    def get_road_width(self, pos) -> float:
+        if self.config is None:
+            return DEFAULT_ROAD_WIDTH
+        return self.config.get_road_width(pos)
 
     def dir_parts(self):
         basic_file_name = f"{self.add_file_name_arr[0]}/nol_pop_{self.population}"
@@ -548,7 +560,9 @@ class MoveAgent(mesa.Model):
             if detail is None:
                 continue
             _, cur, _, _, _, _, _, _ = detail
-            if not is_in_corner_area(agent.pos, cur, ROAD_HALF_WIDTH, CORNER_MARGIN):
+            target_params = self.get_target_params()
+            half_width = self.get_road_width(agent.pos) / 2.0
+            if not is_in_corner_area(agent.pos, cur, half_width, target_params.corner_margin):
                 continue
             cur_node_id = agent.route[agent.route_idx]
             counts[cur_node_id] = counts.get(cur_node_id, 0) + 1
