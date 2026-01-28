@@ -44,6 +44,10 @@ def _straight_target(agent_pos, cur_pos, dir_in, road_width):
     return _project_to_segment(np.array(agent_pos, dtype=float), a, b)
 
 
+def compute_straight_target(agent_pos, cur_pos, dir_in, road_width=DEFAULT_ROAD_WIDTH):
+    return _straight_target(agent_pos, cur_pos, dir_in, road_width)
+
+
 def _turn_corner(cur_pos, dir_in, dir_out, half_width):
     corner_x = cur_pos[0] + half_width * (dir_out[0] if dir_out[0] != 0 else dir_in[0])
     corner_y = cur_pos[1] + half_width * (dir_out[1] if dir_out[1] != 0 else dir_in[1])

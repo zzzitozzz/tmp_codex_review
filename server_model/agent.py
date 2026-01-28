@@ -255,6 +255,14 @@ class Human(mesa.Agent):
         return self.aim_pos
 
     def update_target_pos_from_route(self):
+        if len(self.route) == 1:
+            cur_pos = self.cur_dest
+            if self._dir_in0 is None:
+                self._dir_in0 = axis_dir(self.pos, cur_pos)
+            road_width = self._road_width_at(cur_pos)
+            self.aim_pos = nav_targets.compute_straight_target(
+                self.pos, cur_pos, self._dir_in0, road_width=road_width)
+            return self.aim_pos
         prev_pos = None
         if self.route_idx > 0:
             prev_pos = self.model.dests[self.route[self.route_idx - 1]]
@@ -481,6 +489,11 @@ class Human(mesa.Agent):
             self.in_goal = True
             self.velocity = [0.0, 0.0]
             return None
+        if len(self.route) == 1:
+            if dest_dis < 1.5:
+                self.in_goal = True
+                self.velocity = [0.0, 0.0]
+            return None
         turn_context = self._get_turn_context(self.route_idx)
         if turn_context is not None:
             cur, dir_in, slope, _ = turn_context
@@ -494,7 +507,7 @@ class Human(mesa.Agent):
                     self._reset_corner_state()
                     self.update_aim_pos_from_route() # scatter-dest
                 return None
-        else:
+        elif len(self.route) > 1:
             cur = self.cur_dest
             dir_in = self._get_dir_in(self.route_idx)
             if dir_in is not None:
