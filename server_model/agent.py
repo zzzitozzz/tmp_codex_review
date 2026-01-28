@@ -89,6 +89,10 @@ def crossed_midline(pos, cur, dir_in, h, slope):
     s_pos = midline_s(pos, cur, slope)
     return s_pos * s_entry <= 0.0
 
+def crossed_entry_line(pos, cur, dir_in, h):
+    p_entry = np.array(cur, dtype=float) - np.array(dir_in, dtype=float) * h
+    return np.dot(np.array(pos, dtype=float) - p_entry, np.array(dir_in, dtype=float)) >= 0.0
+
 def is_in_corner_area(pos, cur, half_width, margin):
     dx = abs(float(pos[0]) - float(cur[0]))
     dy = abs(float(pos[1]) - float(cur[1]))
@@ -306,6 +310,22 @@ class Human(mesa.Agent):
         slope = slope_from_corner(corner_name)
         return prev, cur, nxt, dir_in, dir_out, slope, corner_name, corner_pos
 
+    def _get_dir_in(self, route_idx):
+        if route_idx + 1 >= len(self.route):
+            return None
+        cur = np.array(self.model.dests[self.route[route_idx]], dtype=float)
+        if route_idx <= 0:
+            if self._dir_in0 is None:
+                dir_in = axis_dir(self.init_pos, cur)
+                if np.allclose(dir_in, 0.0):
+                    nxt = np.array(self.model.dests[self.route[route_idx + 1]], dtype=float)
+                    dir_in = axis_dir(cur, nxt)
+                self._dir_in0 = dir_in
+            return self._dir_in0
+        self._dir_in0 = None
+        prev = np.array(self.model.dests[self.route[route_idx - 1]], dtype=float)
+        return axis_dir(prev, cur)
+
     def _reset_corner_state(self):
         self._corner_node_id = None
         self._corner_target = None
@@ -474,7 +494,21 @@ class Human(mesa.Agent):
                     self._reset_corner_state()
                     self.update_aim_pos_from_route() # scatter-dest
                 return None
-        if dest_dis < 1.5:
+        else:
+            cur = self.cur_dest
+            dir_in = self._get_dir_in(self.route_idx)
+            if dir_in is not None:
+                half_width = self._half_width_at(cur)
+                if crossed_entry_line(self.pos, cur, dir_in, half_width):
+                    if len(self.route) == self.route_idx + 1:
+                        self.in_goal = True
+                        self.velocity = [0.0, 0.0]
+                    else:
+                        self.route_idx += 1
+                        self._reset_corner_state()
+                        self.update_target_pos_from_route()
+                    return None
+        if turn_context is not None and dest_dis < 1.5:
             if len(self.route) == self.route_idx + 1:
                 self.in_goal = True
                 self.velocity = [0.0, 0.0]

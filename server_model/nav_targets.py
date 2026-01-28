@@ -18,10 +18,30 @@ def _axis_dir(from_pos, to_pos):
     return np.array([0, _sign(vec[1])], dtype=int)
 
 
-def _straight_target(cur_pos, dir_in, offset):
+def _project_to_segment(pos, a, b):
+    v = b - a
+    denom = np.dot(v, v)
+    if denom <= 0.0:
+        return np.array(a, dtype=float)
+    t = np.dot(pos - a, v) / denom
+    t = np.clip(t, 0.0, 1.0)
+    return a + t * v
+
+
+def _perp_dir(dir_in):
+    if abs(dir_in[0]) > 0:
+        return np.array([0.0, 1.0])
+    return np.array([1.0, 0.0])
+
+
+def _straight_target(agent_pos, cur_pos, dir_in, road_width):
     if np.all(dir_in == 0):
-        return np.array(cur_pos)
-    return np.array(cur_pos) - dir_in * offset
+        return np.array(cur_pos, dtype=float)
+    half_width = road_width / 2.0
+    dir_perp = _perp_dir(dir_in)
+    a = np.array(cur_pos, dtype=float) - dir_perp * half_width
+    b = np.array(cur_pos, dtype=float) + dir_perp * half_width
+    return _project_to_segment(np.array(agent_pos, dtype=float), a, b)
 
 
 def _turn_corner(cur_pos, dir_in, dir_out, half_width):
@@ -51,7 +71,7 @@ def compute_target_pos(agent_pos, prev_pos, cur_pos, next_pos,
                        in_dest_d, road_width=DEFAULT_ROAD_WIDTH):
     """Return a target position for SFM guidance.
 
-    Straight paths use an offset point before the intersection center.
+    Straight paths use a centerline segment projection through the intersection.
     Turns use a corner-based target that depends on the agent's wall distance.
     """
     if next_pos is None:
@@ -61,7 +81,7 @@ def compute_target_pos(agent_pos, prev_pos, cur_pos, next_pos,
     dir_in = _axis_dir(prev_anchor, cur_pos)
     dir_out = _axis_dir(cur_pos, next_pos)
     if np.all(dir_in == dir_out) or np.dot(dir_in, dir_out) != 0:
-        return _straight_target(cur_pos, dir_in, in_dest_d)
+        return _straight_target(agent_pos, cur_pos, dir_in, road_width)
 
     half_width = road_width / 2.0
     corner_pos = _turn_corner(cur_pos, dir_in, dir_out, half_width)
@@ -75,7 +95,6 @@ def debug_turn_targets():
     next_pos = np.array([51.0, 38.0])
     agent_pos = np.array([3.0, 90.0])
     target = compute_target_pos(agent_pos, prev, cur, next_pos, in_dest_d=3.0)
-    corner = np.array([8.0, 35.0])
     expected = np.array([3.0, 40.0])
     assert np.allclose(target, expected), f"expected {expected}, got {target}"
 
