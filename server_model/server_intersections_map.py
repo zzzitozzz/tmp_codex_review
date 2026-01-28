@@ -1,13 +1,15 @@
 import sys
-from model import MoveAgent, Rect
+from model import MoveAgent
 
 import numpy as np
 from dataclasses import dataclass, field
 from agent import SharedParams, Human, Wall, InfoShareMode
 from params import StrategyConfig
+from maps.intersection_config import INTERSECTION_MAP_CONFIG
 
 @dataclass
 class InitPosFuncs:
+    config: object
     f_r_use: bool = False # True: 常に強引な避難者の半径を使用 False: 普段は強引な避難者も通常の避難者と同じ半径を使用
     tmp_point_arr: list = field(default_factory=lambda: [[8.0, 8.0], [48.0, 38.0],
                                                         [54.0, 8.0], [84.0, 38.0], 
@@ -31,9 +33,10 @@ class InitPosFuncs:
     #     return pos
 
     def decide_position(self, rng, r, f_r, human_array):
+        rect = self.config.spawn["normal"]
         while 1:
-            x = rng.uniform(2.+ r, 156. - r)
-            y = rng.uniform(2. + r, 100. - r) #初期配置(未確定)
+            x = rng.uniform(rect.x_min + r, rect.x_max - r)
+            y = rng.uniform(rect.y_min + r, rect.y_max - r) #初期配置(未確定)
             tmp_pos = np.array((x, y))
             ###tmp
             i = 0
@@ -54,11 +57,11 @@ class InitPosFuncs:
         return pos
 
     def decide_forceful_position(self, rng, r, f_r, human_array):
-        len_sq = 3 # 初期エリア：ただし長方形の一辺の長さはlen_sq*2
+        rect = self.config.spawn["forceful"]
         while 1:
-            x = rng.randint(19. - len_sq, 19. + len_sq) + rng.rand()
-            y = rng.randint(32.5 - len_sq, 32.5 + len_sq) + rng.rand()
-            if 19.- len_sq + r <= x <= 19.+ len_sq - r and 32.5- len_sq + r <= y <= 32.5+ len_sq - r:
+            x = rng.uniform(rect.x_min, rect.x_max)
+            y = rng.uniform(rect.y_min, rect.y_max)
+            if rect.x_min + r <= x <= rect.x_max - r and rect.y_min + r <= y <= rect.y_max - r:
                 tmp_pos = np.array((x, y))
                 if self.forceful_human_pos_check(r, f_r, tmp_pos, human_array):
                     pos = tmp_pos
@@ -218,7 +221,7 @@ def apply_strategy_shorthand(args):
 
 def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges, dead_edges,
                             goal_arr, goals, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
-                            share_block_info=False, forceful_preset="baseline", strategy=None):
+                            share_block_info=False, forceful_preset="baseline", strategy=None, config=None):
     ex_num = 1 # force_tau
     # if csv_plot:
     #     file_name_array = [
@@ -263,7 +266,8 @@ def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_a
         csv_plot=csv_plot,
         info_share_mode=InfoShareMode.SHARE_BLOCKED_ROAD if share_block_info else InfoShareMode.NO_SHARE,
         forceful_preset=forceful_preset,
-        strategy=strategy)
+        strategy=strategy,
+        config=config)
     return m
 
 
@@ -310,52 +314,21 @@ if __name__ == '__main__':
     # max_f_r = 1.01
     human_var, forceful_human_var = build_sfm_vars(args, f_tau)
     strategy = build_strategy_config(args, f_tau)
-    pos_func = InitPosFuncs()
-    wall_arr = np.array([[[2.0, 2.0], [156.0, 2.0]], [[156.0, 2.0], [156.0, 100.0]],
-                        [[156.0, 100.0], [2.0, 100.0]], [[2.0, 100.0], [2.0, 2.0]], 
-                        [[8.0, 8.0], [48.0, 8.0]], [[48.0, 8.0], [48.0, 38.0]], 
-                        [[48.0, 38.0], [8.0, 38.0]], [[8.0, 38.0], [8.0, 8.0]], 
-                        [[54.0, 8.0], [84.0, 8.0]], [[84.0, 8.0], [84.0, 38.0]], 
-                        [[84.0, 38.0], [54.0, 38.0]], [[54.0, 38.0], [54.0, 8.0]], 
-                        [[90.0, 8.0], [150.0, 8.0]], [[150.0, 8.0], [150.0, 38.0]], 
-                        [[150.0, 38.0], [90.0, 38.0]], [[90.0, 38.0], [90.0, 8.0]], 
-                        [[8.0, 44.0], [48.0, 44.0]], [[48.0, 44.0], [48.0, 94.0]], 
-                        [[48.0, 94.0], [8.0, 94.0]], [[8.0, 94.0], [8.0, 44.0]], 
-                        [[54.0, 44.0], [84.0, 44.0]], [[84.0, 44.0], [84.0, 94.0]], 
-                        [[84.0, 94.0], [54.0, 94.0]], [[54.0, 94.0], [54.0, 44.0]], 
-                        [[90.0, 44.0], [150.0, 44.0]], [[150.0, 44.0], [150.0, 94.0]], 
-                        [[150.0, 94.0], [90.0, 94.0]], [[90.0, 94.0], [90.0, 44.0]],
-                        # [[118.0, 38.0], [118.0, 44.0]], [[122.0, 38.0], [122.0, 44.0]]
-                        ])
+    config = INTERSECTION_MAP_CONFIG
+    pos_func = InitPosFuncs(config=config)
+    wall_arr = config.wall_arr
+    dead_wall_arr = config.dead_wall_arr
 
-    # dead_wall_arr = np.array([[[118.0, 38.0], [118.0, 44.0]], [[122.0, 38.0], [122.0, 44.0]]]) #不通道路を示す壁
-
-    dests = [[5.,5.,],[51.,5.],[87.,5.],[153.,5.],
-             [5., 41.],[51., 41.],[87., 41.],[153., 41.],
-             [5.,97.],[51.,97.],[87.,97.],[153.,97.],
-            [120., 41.]]
-            #  [120., 41.]]
-            
-    
-    edges = {0: [1, 4], 1: [0, 2, 5], 2: [1, 3, 6], 3: [2, 7],
-             4: [0, 5, 8], 5: [1, 4, 6, 9], 6: [2, 5, 10, 12], 7: [3, 11, 12], 
-             8: [4, 9], 9: [5, 8, 10], 10: [6, 9, 11], 11: [7, 10],
-             12: [6, 7]} # ノードの接続情報 (12:行き止まりノード)
-    
-    dead_edges = [12] # 行き止まりノードのインデックス
-    dead_wall_arr = np.array([
-                        [[118.0, 38.0], [118.0, 44.0]], [[122.0, 38.0], [122.0, 44.0]]
-                        ])
-    goal_arr = [7, 7] # ゴールのインデックス(通常，強引)
-    goals = {
-        "normal": Rect(150.0, 156.0, 38.0, 44.0),
-        "forceful": Rect(150.0, 156.0, 38.0, 44.0),
-    }
+    dests = config.dests
+    edges = config.edges
+    dead_edges = config.dead_edges
+    goal_arr = config.goal_arr
+    goals = config.goals
     while 1:
         m = make_new_model_instance(
             human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges, dead_edges,
             goal_arr, goals, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
-            share_block_info=share_block_info, forceful_preset=args.forceful_preset, strategy=strategy)
+            share_block_info=share_block_info, forceful_preset=args.forceful_preset, strategy=strategy, config=config)
         m.running = True
         while m.running:
             m.step()
