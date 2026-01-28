@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from .common_config import MapConfig, Rect, RoadWidthRegion, TargetParams
 
+import numpy as np
+
 GOALS = {
     "normal": Rect(52.5, 54.0, 26.0, 40.0),
     "forceful": Rect(16.0, 22.0, 4.0, 5.5),
@@ -36,4 +38,14 @@ CONVEX_MAP_CONFIG = MapConfig(
     target_params=TARGET_PARAMS,
     road_width_regions=ROAD_WIDTH_REGIONS,
     default_road_width=6.0,
+    wall_arr=np.array([[[2., 40.], [54., 40.]],
+                       [[2., 26.], [16., 26.]],
+                       [[22., 26.], [54., 26.]],
+                       [[16., 4.], [16., 26.]],
+                       [[22., 4.], [22., 26.]]]),
+    dead_wall_arr=np.array([[]]),
+    dests=[[9, 33], [19, 33], [19, 4], [54, 33]],
+    edges={0: [1], 1: [0, 2, 3], 2: [1], 3: [1]},
+    dead_edges=[],
+    goal_arr=[3, 2],
 )

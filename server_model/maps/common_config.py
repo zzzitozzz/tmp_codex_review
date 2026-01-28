@@ -47,6 +47,12 @@ class MapConfig:
     target_params: TargetParams = field(default_factory=TargetParams)
     road_width_regions: Iterable[RoadWidthRegion] = field(default_factory=tuple)
     default_road_width: float = DEFAULT_ROAD_WIDTH
+    wall_arr: object | None = None
+    dead_wall_arr: object | None = None
+    dests: list = field(default_factory=list)
+    edges: dict = field(default_factory=dict)
+    dead_edges: list = field(default_factory=list)
+    goal_arr: list = field(default_factory=list)
 
     def get_road_width(self, pos) -> float:
         for region in self.road_width_regions:

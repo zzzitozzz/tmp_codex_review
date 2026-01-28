@@ -281,16 +281,12 @@ if __name__ == '__main__':
     strategy = build_strategy_config(args, f_tau)
     config = CONVEX_MAP_CONFIG
     pos_func = InitPosFuncs(config=config)
-    wall_arr = np.array([[[2., 40.], [54., 40.]],
-                [[2., 26.], [16., 26.]],
-                [[22., 26.], [54., 26.]],
-                [[16., 4.], [16., 26.]],
-                [[22., 4.], [22., 26.]]])
-    dead_wall_arr = np.array([[]])
+    wall_arr = config.wall_arr
+    dead_wall_arr = config.dead_wall_arr
 
-    dests = [[9, 33], [19, 33], [19, 4], [54, 33]]
-    edges = {0: [1], 1: [0, 2, 3], 2: [1], 3: [1]} # ノードの接続情報
-    goal_arr = [3, 2] # ゴールのインデックス(通常，強引)
+    dests = config.dests
+    edges = config.edges
+    goal_arr = config.goal_arr
     goals = config.goals
     while 1:
         m = make_new_model_instance(
