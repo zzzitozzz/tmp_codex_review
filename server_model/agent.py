@@ -236,9 +236,7 @@ class Human(mesa.Agent):
     # scatter-dest
     def update_aim_pos_from_route(self):
         node_pos = self.cur_dest
-        walls_for_los = self.model.get_walls_for_los(self.re_route_state)
-        self.aim_pos = self.model.generate_scatter_destination(
-            self.pos, node_pos, walls_for_los, rng=self.rng)
+        self.update_target_pos_from_route()
         if getattr(self.model, "debug_scatter_dest", False):
             print(f"[scatter-dest] id={self.unique_id} idx={self.route_idx} "
                   f"node={self.route[self.route_idx]} node_pos={node_pos} "
@@ -255,9 +253,11 @@ class Human(mesa.Agent):
         return self.aim_pos
 
     def update_target_pos_from_route(self):
-        if len(self.route) == 1:
+        if len(self.route) == 1 or len(self.route) == self.route_idx + 1:
             cur_pos = self.cur_dest
             if self._dir_in0 is None:
+                self._dir_in0 = axis_dir(self.pos, cur_pos)
+            elif len(self.route) == self.route_idx + 1:
                 self._dir_in0 = axis_dir(self.pos, cur_pos)
             road_width = self._road_width_at(cur_pos)
             self.aim_pos = nav_targets.compute_straight_target(
@@ -490,9 +490,6 @@ class Human(mesa.Agent):
             self.velocity = [0.0, 0.0]
             return None
         if len(self.route) == 1:
-            if dest_dis < 1.5:
-                self.in_goal = True
-                self.velocity = [0.0, 0.0]
             return None
         turn_context = self._get_turn_context(self.route_idx)
         if turn_context is not None:
@@ -505,7 +502,7 @@ class Human(mesa.Agent):
                 else:
                     self.route_idx += 1
                     self._reset_corner_state()
-                    self.update_aim_pos_from_route() # scatter-dest
+                    self.update_aim_pos_from_route() # scatter-dest               
                 return None
         elif len(self.route) > 1:
             cur = self.cur_dest
@@ -521,7 +518,7 @@ class Human(mesa.Agent):
                         self._reset_corner_state()
                         self.update_target_pos_from_route()
                     return None
-        if turn_context is not None and dest_dis < 1.5:
+        if turn_context is not None and dest_dis < 1.5: #以前の処理
             if len(self.route) == self.route_idx + 1:
                 self.in_goal = True
                 self.velocity = [0.0, 0.0]
