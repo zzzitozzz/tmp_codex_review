@@ -21,17 +21,6 @@ class InitPosFuncs:
                                                         [118.0, 38.0], [122.0, 44.0]
                                                         ])
 
-    # def decide_position(self, r, f_r, human_array):
-    #     while 1:
-    #         x = np.random.randint(4, 34) + np.random.rand()
-    #         y = np.random.randint(26, 40) + np.random.rand() #初期配置(未確定)
-    #         if 4. + r * 2 <= x <= 34. - r * 2 and 26. + r * 2 <= y <= 40. - r * 2:
-    #             tmp_pos = np.array((x, y))
-    #             if self.human_pos_check(r, f_r, tmp_pos, human_array): #ボジションチェック(既存のエージェントの位置と被っていないか)
-    #                 pos = tmp_pos
-    #                 break
-    #     return pos
-
     def decide_position(self, rng, r, f_r, human_array):
         rect = self.config.spawn["normal"]
         while 1:
