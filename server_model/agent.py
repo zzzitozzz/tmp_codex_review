@@ -165,6 +165,7 @@ class Human(mesa.Agent):
                  forceful_initial=False,
                  can_become_forceful=False,
                  is_forceful=None,
+                 has_phone=False,
                  ):
         super().__init__(unique_id, model)
         self.pos = np.array(pos)
@@ -201,6 +202,8 @@ class Human(mesa.Agent):
         self._corner_mode = None
         self.speed_scale = 1.0
         self.congested_state = False
+        self.has_phone = bool(has_phone)
+        self.known_dead_edges = set()
         ######################
 
     @property
@@ -566,6 +569,9 @@ class Human(mesa.Agent):
         for i in range(len(self.model.dead_wall_ab)):
             dist, _ = self.dead_distance_point_to_segment(i)
             if dist < DETECT_R:
+                dead_edge_id = self.model.get_dead_edge_id(i)
+                if dead_edge_id is not None:
+                    self.known_dead_edges.add(int(dead_edge_id))
                 self.re_route_state = RouteState.KNOWN
                 self.block_info_state = BlockInfoState.KNOWN
                 # 不通を考慮した距離木で再ルート
@@ -576,6 +582,19 @@ class Human(mesa.Agent):
                 self.update_target_pos_from_route()
                 return True
         return False
+
+    def apply_shared_block_info(self, shared_info):
+        if not shared_info:
+            return False
+        before = len(self.known_dead_edges)
+        self.known_dead_edges.update(shared_info)
+        if len(self.known_dead_edges) == before:
+            return False
+        self.block_info_state = BlockInfoState.KNOWN
+        if self.re_route_state == RouteState.NORMAL:
+            self.re_route_state = RouteState.KNOWN
+        self._needs_reroute_from_share = True
+        return True
 
     def share_block_info(self):
         if self.model.info_share_mode != InfoShareMode.SHARE_BLOCKED_ROAD:
