@@ -46,6 +46,8 @@ class MoveAgent(mesa.Model):
             phone_ratio=0.0,
             share_interval_sec=0.3,
             R_short=6.0,
+            share_block_info=False,
+            R_face=1.5,
             forceful_preset="baseline",
             strategy: StrategyConfig | None = None,
             goals=None,
@@ -89,6 +91,8 @@ class MoveAgent(mesa.Model):
         self.phone_ratio = float(phone_ratio)
         self.share_interval_sec = float(share_interval_sec)
         self.R_short = float(R_short)
+        self.share_block_info = bool(share_block_info)
+        self.R_face = float(R_face)
         self.share_every_steps = max(
             1, int(math.ceil(self.share_interval_sec / self.dt)))
         self.forceful_preset = forceful_preset
@@ -174,6 +178,8 @@ class MoveAgent(mesa.Model):
                 "share_interval_sec": self.share_interval_sec,
                 "share_every_steps": self.share_every_steps,
                 "R_short": self.R_short,
+                "share_block_info": self.share_block_info,
+                "R_face": self.R_face,
                 "forceful_preset": self.forceful_preset,
                 "strategy": self.strategy.to_dict(),
                 "agent_params": {
@@ -673,15 +679,26 @@ class MoveAgent(mesa.Model):
         return None
 
     def communication_step(self):
-        phone_agents = [
-            agent for agent in self.schedule.agents
-            if isinstance(agent, Human) and agent.has_phone
-        ]
-        if not phone_agents:
+        if self.phone_ratio > 0.0:
+            phone_agents = [
+                agent for agent in self.schedule.agents
+                if isinstance(agent, Human) and agent.has_phone
+            ]
+            self._share_block_info_within_agents(phone_agents, self.R_short)
+        if self.share_block_info:
+            all_agents = [
+                agent for agent in self.schedule.agents
+                if isinstance(agent, Human)
+            ]
+            self._share_block_info_within_agents(all_agents, self.R_face)
+        return None
+
+    def _share_block_info_within_agents(self, agents, radius):
+        if not agents:
             return None
-        phone_set = set(phone_agents)
+        agent_set = set(agents)
         visited = set()
-        for agent in phone_agents:
+        for agent in agents:
             if agent in visited:
                 continue
             component = []
@@ -691,9 +708,9 @@ class MoveAgent(mesa.Model):
                 current = stack.pop()
                 component.append(current)
                 neighbors = self.space.get_neighbors(
-                    current.pos, self.R_short, False)
+                    current.pos, radius, False)
                 for neighbor in neighbors:
-                    if neighbor in phone_set and neighbor not in visited:
+                    if neighbor in agent_set and neighbor not in visited:
                         visited.add(neighbor)
                         stack.append(neighbor)
             if len(component) <= 1:

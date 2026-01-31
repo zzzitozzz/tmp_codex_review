@@ -211,7 +211,7 @@ def apply_strategy_shorthand(args):
 def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges, dead_edges,
                             goal_arr, goals, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
                             share_block_info=False, forceful_preset="baseline", strategy=None, config=None,
-                            phone_ratio=0.0, share_interval_sec=0.3, R_short=6.0):
+                            phone_ratio=0.0, share_interval_sec=0.3, R_short=6.0, R_face=1.5):
     ex_num = 1 # force_tau
     # if csv_plot:
     #     file_name_array = [
@@ -258,6 +258,8 @@ def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_a
         phone_ratio=phone_ratio,
         share_interval_sec=share_interval_sec,
         R_short=R_short,
+        share_block_info=share_block_info,
+        R_face=R_face,
         forceful_preset=forceful_preset,
         strategy=strategy,
         config=config)
@@ -292,6 +294,7 @@ if __name__ == '__main__':
     parser.add_argument("--phone_ratio", type=float, default=0.0, help="端末所持者の割合 (0-1)")
     parser.add_argument("--share_interval_sec", type=float, default=0.3, help="端末間共有の周期[秒]")
     parser.add_argument("--R_short", type=float, default=6.0, help="端末間通信距離[m]")
+    parser.add_argument("--R_face", type=float, default=1.5, help="対面共有の距離[m]")
     parser.add_argument("--forceful_preset", default="baseline",
                         choices=["baseline", "goal_strong", "ff_weak", "asym_fn", "combo"],
                         help="SFM係数プリセット")
@@ -325,7 +328,8 @@ if __name__ == '__main__':
             human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges, dead_edges,
             goal_arr, goals, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
             share_block_info=share_block_info, forceful_preset=args.forceful_preset, strategy=strategy, config=config,
-            phone_ratio=args.phone_ratio, share_interval_sec=args.share_interval_sec, R_short=args.R_short)
+            phone_ratio=args.phone_ratio, share_interval_sec=args.share_interval_sec, R_short=args.R_short,
+            R_face=args.R_face)
         m.running = True
         while m.running:
             m.step()
