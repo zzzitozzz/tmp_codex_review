@@ -4,7 +4,7 @@ import numpy as np
 def load_agent_csv(path):
     """
     描画用にCSVを読み込み、位置と状態配列を返す。
-    2列(旧仕様)でも3列(新仕様)でも動作する。
+    2列(旧仕様)でも3列(旧仕様)でも6列(新仕様)でも動作する。
     """
     data = np.atleast_2d(np.loadtxt(path, delimiter=","))
     pos_array = data[:, :2]

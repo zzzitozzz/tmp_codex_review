@@ -3,6 +3,7 @@
 /server/__pycache__/**
 **/.DS_Store/**
 **/obs_agent/** 
+**/obs_agent_has_phone/** 
 **/obs_agents/**
 **/tmp/**
 ./cal_machine_data/**
