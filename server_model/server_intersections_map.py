@@ -21,17 +21,6 @@ class InitPosFuncs:
                                                         [118.0, 38.0], [122.0, 44.0]
                                                         ])
 
-    # def decide_position(self, r, f_r, human_array):
-    #     while 1:
-    #         x = np.random.randint(4, 34) + np.random.rand()
-    #         y = np.random.randint(26, 40) + np.random.rand() #初期配置(未確定)
-    #         if 4. + r * 2 <= x <= 34. - r * 2 and 26. + r * 2 <= y <= 40. - r * 2:
-    #             tmp_pos = np.array((x, y))
-    #             if self.human_pos_check(r, f_r, tmp_pos, human_array): #ボジションチェック(既存のエージェントの位置と被っていないか)
-    #                 pos = tmp_pos
-    #                 break
-    #     return pos
-
     def decide_position(self, rng, r, f_r, human_array):
         rect = self.config.spawn["normal"]
         while 1:
@@ -221,7 +210,8 @@ def apply_strategy_shorthand(args):
 
 def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges, dead_edges,
                             goal_arr, goals, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
-                            share_block_info=False, forceful_preset="baseline", strategy=None, config=None):
+                            share_block_info=False, forceful_preset="baseline", strategy=None, config=None,
+                            phone_ratio=0.0, share_interval_sec=0.3, R_short=6.0):
     ex_num = 1 # force_tau
     # if csv_plot:
     #     file_name_array = [
@@ -230,9 +220,9 @@ def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_a
     #     file_name_array = [
     #         f"/local_home/keito/simple_convex_map/agst_dir/goal_up_forceful_tau/ex{ex_num}_for_{for_pop}_len_{int(len_sq)}/tau_{int(f_tau*100)}/"]
     if csv_plot:
-        file_name_array = [f"./tmp_data/tau_{int(f_tau*100)}/"]
+        file_name_array = [f"./tmp_data/intersection_map/tau_{int(f_tau*100)}/"]
     else:
-        file_name_array = [f"./tmp_data/tau_{int(f_tau*100)}/"]
+        file_name_array = [f"./tmp_data/intersection_map/tau_{int(f_tau*100)}/"]
 
     m = MoveAgent(
         population=pop_num,
@@ -265,6 +255,9 @@ def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_a
         pos_func=pos_func,
         csv_plot=csv_plot,
         info_share_mode=InfoShareMode.SHARE_BLOCKED_ROAD if share_block_info else InfoShareMode.NO_SHARE,
+        phone_ratio=phone_ratio,
+        share_interval_sec=share_interval_sec,
+        R_short=R_short,
         forceful_preset=forceful_preset,
         strategy=strategy,
         config=config)
@@ -296,6 +289,9 @@ if __name__ == '__main__':
     parser.add_argument("--v0", type=float, default=0.8, help="通常避難者の希望速度係数")
     parser.add_argument("--f_v0", type=float, help="強引避難者の希望速度係数")
     parser.add_argument("--share_block_info", action="store_true", help="不通道路情報を共有する")
+    parser.add_argument("--phone_ratio", type=float, default=0.0, help="端末所持者の割合 (0-1)")
+    parser.add_argument("--share_interval_sec", type=float, default=0.3, help="端末間共有の周期[秒]")
+    parser.add_argument("--R_short", type=float, default=6.0, help="端末間通信距離[m]")
     parser.add_argument("--forceful_preset", default="baseline",
                         choices=["baseline", "goal_strong", "ff_weak", "asym_fn", "combo"],
                         help="SFM係数プリセット")
@@ -328,7 +324,8 @@ if __name__ == '__main__':
         m = make_new_model_instance(
             human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges, dead_edges,
             goal_arr, goals, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
-            share_block_info=share_block_info, forceful_preset=args.forceful_preset, strategy=strategy, config=config)
+            share_block_info=share_block_info, forceful_preset=args.forceful_preset, strategy=strategy, config=config,
+            phone_ratio=args.phone_ratio, share_interval_sec=args.share_interval_sec, R_short=args.R_short)
         m.running = True
         while m.running:
             m.step()
