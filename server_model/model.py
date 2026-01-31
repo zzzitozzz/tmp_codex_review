@@ -43,6 +43,11 @@ class MoveAgent(mesa.Model):
             len_sq=3., f_r=0.,pos_func= {},
             csv_plot=False,
             info_share_mode=InfoShareMode.NO_SHARE,
+            phone_ratio=0.0,
+            share_interval_sec=0.3,
+            R_short=6.0,
+            share_block_info=False,
+            R_face=1.5,
             forceful_preset="baseline",
             strategy: StrategyConfig | None = None,
             goals=None,
@@ -83,6 +88,13 @@ class MoveAgent(mesa.Model):
         ###
         self.csv_plot = csv_plot
         self.info_share_mode = info_share_mode
+        self.phone_ratio = float(phone_ratio)
+        self.share_interval_sec = float(share_interval_sec)
+        self.R_short = float(R_short)
+        self.share_block_info = bool(share_block_info)
+        self.R_face = float(R_face)
+        self.share_every_steps = max(
+            1, int(math.ceil(self.share_interval_sec / self.dt)))
         self.forceful_preset = forceful_preset
         self.strategy = strategy or StrategyConfig()
         self.max_steps = 1500
@@ -92,6 +104,10 @@ class MoveAgent(mesa.Model):
             (self.log_capacity, self.num_agents, 2), dtype=np.float32)
         self.state_log = np.zeros(
             (self.log_capacity, self.num_agents), dtype=np.int8)
+        self.has_block_info_log = np.zeros(
+            (self.log_capacity, self.num_agents), dtype=np.int8)
+        self.known_blocks_log = np.zeros(
+            (self.log_capacity, self.num_agents), dtype=np.int16)
         self.goal_reached_step = np.full(self.num_agents, -1, dtype=np.int32)
         self.corner_counts = {}
         shared = SharedParams(self.in_dest_d, self.vision, self.dt)
@@ -157,6 +173,13 @@ class MoveAgent(mesa.Model):
             data = {
                 "run_time" : run_time,
                 "shared_val" : vars(shared),
+                "dt": self.dt,
+                "phone_ratio": self.phone_ratio,
+                "share_interval_sec": self.share_interval_sec,
+                "share_every_steps": self.share_every_steps,
+                "R_short": self.R_short,
+                "share_block_info": self.share_block_info,
+                "R_face": self.R_face,
                 "forceful_preset": self.forceful_preset,
                 "strategy": self.strategy.to_dict(),
                 "agent_params": {
@@ -202,11 +225,15 @@ class MoveAgent(mesa.Model):
                     pos = self.pos_func.decide_forceful_position(self.r, self.f_r, human_array)
                 if not np.all(np.isfinite(pos)):
                     raise ValueError(f"Non-finite forceful position generated for id {i}: {pos}")
+                has_phone = False
+                if self.phone_ratio > 0.0:
+                    has_phone = self.rng.random() < self.phone_ratio
                 human = Human(i, self, pos, velocity,
                               tmp_div, shared,
                               self.space, self.add_file_name,
                               forceful_initial=True,
                               is_forceful=True,
+                              has_phone=has_phone,
                               )
                 self.space.place_agent(human, pos)
                 self.schedule.add(human)
@@ -217,10 +244,14 @@ class MoveAgent(mesa.Model):
                 if not np.all(np.isfinite(pos)):
                     raise ValueError(f"Non-finite initial position generated for id {i}: {pos}")
                 velocity = self.decide_vel()
+                has_phone = False
+                if self.phone_ratio > 0.0:
+                    has_phone = self.rng.random() < self.phone_ratio
                 human = Human(i, self, pos, velocity,
                               tmp_div, shared,
                               self.space,
-                              self.add_file_name,)
+                              self.add_file_name,
+                              has_phone=has_phone,)
                 self.space.place_agent(human, pos)
                 self.schedule.add(human)
                 human_array.append(human)
@@ -486,6 +517,7 @@ class MoveAgent(mesa.Model):
         self.validate_initial_positions()
         self.log_positions(step_idx=0)
         self.log_states(step_idx=0)
+        self.log_block_info(step_idx=0)
 
     def log_positions(self, step_idx=None):
         idx = self.time_step if step_idx is None else step_idx
@@ -510,6 +542,18 @@ class MoveAgent(mesa.Model):
             self.state_log[idx, agent.unique_id] = int(agent.block_info_state)
         return None
 
+    def log_block_info(self, step_idx=None):
+        idx = self.time_step if step_idx is None else step_idx
+        if not (0 <= idx < self.log_capacity):
+            return None
+        for agent in self.all_agents:
+            if not self._should_log_agent(agent, idx):
+                continue
+            has_info = 1 if agent.known_dead_edges else 0
+            self.has_block_info_log[idx, agent.unique_id] = has_info
+            self.known_blocks_log[idx, agent.unique_id] = len(agent.known_dead_edges)
+        return None
+
     def mark_goal_reached(self, agent, step_idx=None):
         idx = self.time_step + 1 if step_idx is None else step_idx
         idx = min(idx, self.log_capacity - 1)
@@ -518,6 +562,8 @@ class MoveAgent(mesa.Model):
             pos_arr = np.asarray(agent.pos, dtype=float)
             self.pos_log[idx, agent.unique_id, :] = pos_arr
             self.state_log[idx, agent.unique_id] = int(agent.block_info_state)
+            self.has_block_info_log[idx, agent.unique_id] = 1 if agent.known_dead_edges else 0
+            self.known_blocks_log[idx, agent.unique_id] = len(agent.known_dead_edges)
 
 
 
@@ -525,23 +571,13 @@ class MoveAgent(mesa.Model):
         self.update_corner_counts()
         # Phase 1: 行動
         self.schedule.step()
+        if self.time_step % self.share_every_steps == 0:
+            self.communication_step()
         next_step_idx = self.time_step + 1
         if self.csv_plot:
             self.log_positions(step_idx=next_step_idx) #各避難者の位置情報を保存
-
-        # Phase 2: 共有
-        if self.info_share_mode == InfoShareMode.SHARE_BLOCKED_ROAD:
-            for agent in list(self.schedule.agents):
-                if isinstance(agent, Human):
-                    agent.share_block_info()
-        if self.csv_plot:
             self.log_states(step_idx=next_step_idx)
-
-        # Phase 3: 状態更新
-        if self.info_share_mode == InfoShareMode.SHARE_BLOCKED_ROAD:
-            for agent in list(self.schedule.agents):
-                if isinstance(agent, Human):
-                    agent.update_block_info_state()
+            self.log_block_info(step_idx=next_step_idx)
 
         self.time_step = next_step_idx
         if self.time_step % 100 == 0:
@@ -624,10 +660,75 @@ class MoveAgent(mesa.Model):
                 valid_len = idx + 1
             if valid_len == 0:
                 continue
-            data = np.column_stack([pos[:valid_len], state_to_use[:valid_len]])
+            has_phone = 1 if agent.has_phone else 0
+            has_block = self.has_block_info_log[:valid_len, agent.unique_id]
+            known_blocks = self.known_blocks_log[:valid_len, agent.unique_id]
+            phone_col = np.full(valid_len, has_phone, dtype=np.int8)
+            data = np.column_stack([
+                pos[:valid_len],
+                state_to_use[:valid_len],
+                phone_col,
+                has_block,
+                known_blocks,
+            ])
             np.savetxt(
                 os.path.join(out_dir, f"id{agent.unique_id}_normal.csv"),
                 data,
                 delimiter=",",
             )
         return None
+
+    def communication_step(self):
+        if self.phone_ratio > 0.0:
+            phone_agents = [
+                agent for agent in self.schedule.agents
+                if isinstance(agent, Human) and agent.has_phone
+            ]
+            self._share_block_info_within_agents(phone_agents, self.R_short)
+        if self.share_block_info:
+            all_agents = [
+                agent for agent in self.schedule.agents
+                if isinstance(agent, Human)
+            ]
+            self._share_block_info_within_agents(all_agents, self.R_face)
+        return None
+
+    def _share_block_info_within_agents(self, agents, radius):
+        if not agents:
+            return None
+        agent_set = set(agents)
+        visited = set()
+        for agent in agents:
+            if agent in visited:
+                continue
+            component = []
+            stack = [agent]
+            visited.add(agent)
+            while stack:
+                current = stack.pop()
+                component.append(current)
+                neighbors = self.space.get_neighbors(
+                    current.pos, radius, False)
+                for neighbor in neighbors:
+                    if neighbor in agent_set and neighbor not in visited:
+                        visited.add(neighbor)
+                        stack.append(neighbor)
+            if len(component) <= 1:
+                continue
+            union_info = set()
+            for member in component:
+                union_info.update(member.known_dead_edges)
+            if not union_info:
+                continue
+            for member in component:
+                member.apply_shared_block_info(union_info)
+        return None
+
+    def get_dead_edge_id(self, dead_wall_index):
+        if not self.dead_edges:
+            return None
+        if len(self.dead_edges) == 1:
+            return self.dead_edges[0]
+        if dead_wall_index < len(self.dead_edges):
+            return self.dead_edges[dead_wall_index]
+        return dead_wall_index
