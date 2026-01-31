@@ -428,6 +428,38 @@ class Human(mesa.Agent):
         self.speed_scale = (1.0 - target_params.speed_alpha) * self.speed_scale + target_params.speed_alpha * target
         return None
 
+    def _next_exit_id(self):
+        if not hasattr(self, "route"):
+            return None
+        if self.route_idx + 1 < len(self.route):
+            return self.route[self.route_idx + 1]
+        return None
+
+    def _should_wait_for_phase(self):
+        config = getattr(self.model, "config", None)
+        if config is None or not getattr(config, "phase_enabled", True):
+            return False
+        detail = self._get_turn_detail(self.route_idx)
+        if detail is None:
+            return False
+        _, cur, _, _, _, _, _, _ = detail
+        cur_node_id = self.route[self.route_idx]
+        target_params = self._target_params()
+        half_width = self._half_width_at(cur)
+        if not is_in_corner_area(self.pos, cur, half_width, target_params.corner_margin):
+            return False
+        if getattr(config, "phase_only_when_congested", True):
+            congested_by_node = getattr(self.model, "congested_state_by_node", {})
+            if not congested_by_node.get(cur_node_id, False):
+                return False
+        phase_exit = getattr(self.model, "phase_exit_by_node", {}).get(cur_node_id)
+        if phase_exit is None:
+            return False
+        next_exit_id = self._next_exit_id()
+        if next_exit_id is None:
+            return False
+        return next_exit_id != phase_exit
+
     def set_up_initial_route(self):
         self.route, self.dest = self.model.select_first_subgoal(self)
         self.route_idx = 0
@@ -671,7 +703,14 @@ class Human(mesa.Agent):
         return fx, fy
 
     def force_from_goal(self, theta):
-        v0_eff = self.hspecs.v0 * self.speed_scale
+        if self._should_wait_for_phase():
+            wait_speed = 0.0
+            config = getattr(self.model, "config", None)
+            if config is not None:
+                wait_speed = float(getattr(config, "wait_speed", 0.0))
+            v0_eff = wait_speed
+        else:
+            v0_eff = self.hspecs.v0 * self.speed_scale
         fx = self.hspecs.m * (v0_eff * theta[0] - self.velocity[0]) / self.hspecs.tau
         fy = self.hspecs.m * (v0_eff * theta[1] - self.velocity[1]) / self.hspecs.tau
         return fx, fy
