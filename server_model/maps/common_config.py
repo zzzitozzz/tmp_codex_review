@@ -47,6 +47,16 @@ class MapConfig:
     target_params: TargetParams = field(default_factory=TargetParams)
     road_width_regions: Iterable[RoadWidthRegion] = field(default_factory=tuple)
     default_road_width: float = DEFAULT_ROAD_WIDTH
+    visual_follow_enabled: bool = True
+    visual_follow_R_max: float = 5.0
+    visual_follow_fov_deg: float = 120.0
+    visual_follow_d0: float = 1.2
+    visual_follow_p: float = 2.0
+    visual_follow_alpha_max: float = 0.25
+    visual_follow_update_every_steps: int = 2
+    visual_follow_ema_beta: float = 0.2
+    visual_follow_vis_block: str = "simple"
+    visual_follow_same_dir_deg: float = 60.0
     wall_arr: object | None = None
     dead_wall_arr: object | None = None
     dests: list = field(default_factory=list)
