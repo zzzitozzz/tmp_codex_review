@@ -47,6 +47,11 @@ class MapConfig:
     target_params: TargetParams = field(default_factory=TargetParams)
     road_width_regions: Iterable[RoadWidthRegion] = field(default_factory=tuple)
     default_road_width: float = DEFAULT_ROAD_WIDTH
+    phase_enabled: bool = True
+    min_green_steps: int = 5
+    wait_speed: float = 0.0
+    phase_switch_margin: int = 1
+    phase_only_when_congested: bool = True
     wall_arr: object | None = None
     dead_wall_arr: object | None = None
     dests: list = field(default_factory=list)

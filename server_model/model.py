@@ -110,6 +110,10 @@ class MoveAgent(mesa.Model):
             (self.log_capacity, self.num_agents), dtype=np.int16)
         self.goal_reached_step = np.full(self.num_agents, -1, dtype=np.int32)
         self.corner_counts = {}
+        self.congested_state_by_node = {}
+        self.phase_exit_by_node = {}
+        self.phase_timer_by_node = {}
+        self.exit_counts_by_node = {}
         shared = SharedParams(self.in_dest_d, self.vision, self.dt)
         self.agent_params_by_trait, self.pair_params_table = build_sfm_params(
             self.human_var,
@@ -589,6 +593,7 @@ class MoveAgent(mesa.Model):
 
     def update_corner_counts(self):
         counts = {}
+        exit_counts_by_node = {}
         for agent in list(self.schedule.agents):
             if not isinstance(agent, Human):
                 continue
@@ -602,7 +607,75 @@ class MoveAgent(mesa.Model):
                 continue
             cur_node_id = agent.route[agent.route_idx]
             counts[cur_node_id] = counts.get(cur_node_id, 0) + 1
+            next_exit_id = None
+            if agent.route_idx + 1 < len(agent.route):
+                next_exit_id = agent.route[agent.route_idx + 1]
+            if next_exit_id is not None:
+                node_counts = exit_counts_by_node.setdefault(cur_node_id, {})
+                node_counts[next_exit_id] = node_counts.get(next_exit_id, 0) + 1
         self.corner_counts = counts
+        self.exit_counts_by_node = exit_counts_by_node
+        self._update_congested_states(counts)
+        self._update_phase_exits(exit_counts_by_node)
+
+    def _update_congested_states(self, counts):
+        target_params = self.get_target_params()
+        all_nodes = set(self.congested_state_by_node.keys()) | set(counts.keys())
+        updated = {}
+        for node_id in all_nodes:
+            count = counts.get(node_id, 0)
+            congested = self.congested_state_by_node.get(node_id, False)
+            if congested:
+                if count <= target_params.congestion_off:
+                    congested = False
+            else:
+                if count >= target_params.congestion_on:
+                    congested = True
+            if congested:
+                updated[node_id] = True
+        self.congested_state_by_node = updated
+        return None
+
+    def _update_phase_exits(self, exit_counts_by_node):
+        config = self.config
+        if config is None or not getattr(config, "phase_enabled", True):
+            return None
+        min_green = int(getattr(config, "min_green_steps", 0))
+        switch_margin = int(getattr(config, "phase_switch_margin", 0))
+        only_when_congested = bool(getattr(config, "phase_only_when_congested", True))
+        nodes = (
+            set(self.phase_exit_by_node.keys())
+            | set(exit_counts_by_node.keys())
+            | set(self.congested_state_by_node.keys())
+        )
+        for node_id in nodes:
+            if only_when_congested and not self.congested_state_by_node.get(node_id, False):
+                self.phase_timer_by_node[node_id] = 0
+                continue
+            exit_counts = exit_counts_by_node.get(node_id, {})
+            if not exit_counts:
+                self.phase_exit_by_node[node_id] = None
+                self.phase_timer_by_node[node_id] = 0
+                continue
+            candidate_exit, candidate_count = max(
+                exit_counts.items(), key=lambda item: (item[1], item[0])
+            )
+            current_exit = self.phase_exit_by_node.get(node_id)
+            timer = self.phase_timer_by_node.get(node_id, 0)
+            if current_exit is None:
+                self.phase_exit_by_node[node_id] = candidate_exit
+                self.phase_timer_by_node[node_id] = 0
+                continue
+            if timer < min_green:
+                self.phase_timer_by_node[node_id] = timer + 1
+                continue
+            current_count = exit_counts.get(current_exit, 0)
+            if candidate_exit != current_exit and candidate_count >= current_count + switch_margin:
+                self.phase_exit_by_node[node_id] = candidate_exit
+                self.phase_timer_by_node[node_id] = 0
+            else:
+                self.phase_timer_by_node[node_id] = timer + 1
+        return None
 
     def all_agent_evacuate(self):
         return len(self.schedule.agents) == 0
