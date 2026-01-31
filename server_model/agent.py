@@ -200,6 +200,9 @@ class Human(mesa.Agent):
         self._corner_in_area = False
         self._corner_congested = False
         self._corner_mode = None
+        self._vf_dir = None
+        self._vf_last_update_step = -1
+        self._vf_last_sum_w = 0.0
         self.speed_scale = 1.0
         self.congested_state = False
         self.has_phone = bool(has_phone)
@@ -647,12 +650,152 @@ class Human(mesa.Agent):
         cos = (x2[0] - self.pos[0]) / r_0
         return cos, sin
 
+    def _safe_unit(self, vec, eps=1e-8):
+        norm = np.linalg.norm(vec)
+        if norm < eps:
+            return None
+        return vec / norm
+
+    def _goal_direction(self, dest):
+        vec = np.array(dest, dtype=float) - self.pos
+        dir_vec = self._safe_unit(vec)
+        if dir_vec is not None:
+            return dir_vec
+        vel_dir = self._safe_unit(self.velocity)
+        if vel_dir is not None:
+            return vel_dir
+        return np.array([0.0, 0.0])
+
+    def _visual_follow_config(self):
+        config = getattr(self.model, "config", None)
+        if config is None:
+            return None
+        if not getattr(config, "visual_follow_enabled", False):
+            return None
+        return config
+
+    def _visual_follow_active(self):
+        return bool(self._corner_in_area and self._corner_congested)
+
+    def _visual_follow_alpha(self, config):
+        cur_node_id = self._corner_node_id if self._corner_node_id is not None else self.route[self.route_idx]
+        count = self.model.corner_counts.get(cur_node_id, 0)
+        target_params = self._target_params()
+        on = max(1, target_params.congestion_on)
+        high = max(on + 1, int(on * 1.5))
+        ratio = (count - on) / max(1, high - on)
+        ratio = float(np.clip(ratio, 0.0, 1.0))
+        return float(config.visual_follow_alpha_max) * ratio
+
+    def _compute_visual_flow_dir(self, d_goal, config):
+        neighbors = self.model.space.get_neighbors(
+            self.pos, float(config.visual_follow_R_max), False)
+        if not neighbors:
+            return None, 0.0
+        d_goal_unit = self._safe_unit(d_goal)
+        heading = self._safe_unit(self.velocity)
+        if heading is None:
+            heading = d_goal_unit
+        fov_cos = math.cos(math.radians(config.visual_follow_fov_deg) / 2.0)
+        same_dir_cos = math.cos(math.radians(config.visual_follow_same_dir_deg))
+        candidates = []
+        for neighbor in neighbors:
+            if self.unique_id == neighbor.unique_id:
+                continue
+            if not isinstance(neighbor, Human):
+                continue
+            vj = np.array(neighbor.velocity, dtype=float)
+            vj_hat = self._safe_unit(vj)
+            if vj_hat is None:
+                continue
+            if d_goal_unit is not None and np.dot(vj_hat, d_goal_unit) < same_dir_cos:
+                continue
+            vec_ij = neighbor.pos - self.pos
+            dist = np.linalg.norm(vec_ij)
+            if dist < 1e-8:
+                continue
+            u_ij = vec_ij / dist
+            if heading is not None and np.dot(heading, u_ij) < fov_cos:
+                continue
+            candidates.append((dist, neighbor, u_ij))
+        if not candidates:
+            return None, 0.0
+        candidates.sort(key=lambda item: item[0])
+        vis_mode = str(config.visual_follow_vis_block).lower()
+        total_w = 0.0
+        v_sum = np.array([0.0, 0.0])
+        for idx, (dist, neighbor, u_ij) in enumerate(candidates):
+            vis = 1.0
+            if vis_mode != "none":
+                for prev_dist, prev_neighbor, _ in candidates[:idx]:
+                    if prev_dist >= dist:
+                        continue
+                    rel = prev_neighbor.pos - self.pos
+                    proj = float(np.dot(rel, u_ij))
+                    if proj <= 0.0 or proj >= dist:
+                        continue
+                    perp = rel - proj * u_ij
+                    block_thresh = (self.hspecs.r + prev_neighbor.hspecs.r)
+                    if np.linalg.norm(perp) <= block_thresh:
+                        vis = 0.2
+                        break
+            dist_weight = math.exp(-dist / float(config.visual_follow_d0))
+            front = 1.0
+            if heading is not None:
+                front = max(0.0, float(np.dot(heading, u_ij))) ** float(config.visual_follow_p)
+            w_ij = vis * dist_weight * front
+            if w_ij <= 0.0:
+                continue
+            total_w += w_ij
+            v_sum += w_ij * np.array(neighbor.velocity, dtype=float)
+        if total_w <= 1e-8:
+            return None, total_w
+        v_flow = v_sum / total_w
+        d_flow = self._safe_unit(v_flow)
+        return d_flow, total_w
+
+    def _desired_direction(self, d_goal):
+        config = self._visual_follow_config()
+        if config is None:
+            self._vf_dir = None
+            self._vf_last_sum_w = 0.0
+            return d_goal
+        if not self._visual_follow_active():
+            self._vf_dir = None
+            self._vf_last_sum_w = 0.0
+            return d_goal
+        step_idx = getattr(self.model, "time_step", 0)
+        update_every = max(1, int(config.visual_follow_update_every_steps))
+        if (step_idx - self._vf_last_update_step) >= update_every:
+            new_dir, sum_w = self._compute_visual_flow_dir(d_goal, config)
+            self._vf_last_update_step = step_idx
+            self._vf_last_sum_w = sum_w
+            if new_dir is None:
+                self._vf_dir = None
+            else:
+                if self._vf_dir is None:
+                    self._vf_dir = new_dir
+                else:
+                    beta = float(config.visual_follow_ema_beta)
+                    blended = (1.0 - beta) * self._vf_dir + beta * new_dir
+                    blended = self._safe_unit(blended)
+                    self._vf_dir = blended
+        if self._vf_dir is None:
+            return d_goal
+        alpha = self._visual_follow_alpha(config)
+        if alpha <= 0.0:
+            return d_goal
+        combined = (1.0 - alpha) * d_goal + alpha * self._vf_dir
+        blended_dir = self._safe_unit(combined)
+        return blended_dir if blended_dir is not None else d_goal
+
     def _force(self, dest):
         fx, fy = 0., 0.
-        theta = self._sincos(dest)
+        d_goal = self._goal_direction(dest)
+        desired_dir = self._desired_direction(d_goal)
         neighbors = self.model.space.get_neighbors(
             self.pos, self._shared.vision, False)
-        fx, fy = self.force_from_goal(theta)
+        fx, fy = self.force_from_goal(desired_dir)
         for neighbor in neighbors:
             if self.unique_id == neighbor.unique_id:
                 continue
@@ -670,10 +813,10 @@ class Human(mesa.Agent):
         fy /= self.hspecs.m
         return fx, fy
 
-    def force_from_goal(self, theta):
+    def force_from_goal(self, dir_vec):
         v0_eff = self.hspecs.v0 * self.speed_scale
-        fx = self.hspecs.m * (v0_eff * theta[0] - self.velocity[0]) / self.hspecs.tau
-        fy = self.hspecs.m * (v0_eff * theta[1] - self.velocity[1]) / self.hspecs.tau
+        fx = self.hspecs.m * (v0_eff * dir_vec[0] - self.velocity[0]) / self.hspecs.tau
+        fy = self.hspecs.m * (v0_eff * dir_vec[1] - self.velocity[1]) / self.hspecs.tau
         return fx, fy
 
     def force_from_human(self, neighbor):
