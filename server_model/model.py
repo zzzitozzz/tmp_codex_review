@@ -13,7 +13,7 @@ import heapq
 import math
 
 from agent import (SharedParams, Human, Wall, RouteState, InfoShareMode,
-                   BlockInfoState, is_in_corner_area)
+                   BlockInfoState, axis_dir, is_in_corner_area)
 from maps.common_config import DEFAULT_ROAD_WIDTH, TargetParams
 from params import Trait, StrategyConfig, build_sfm_params
 warnings.simplefilter('ignore', UserWarning)
@@ -110,6 +110,10 @@ class MoveAgent(mesa.Model):
             (self.log_capacity, self.num_agents), dtype=np.int16)
         self.goal_reached_step = np.full(self.num_agents, -1, dtype=np.int32)
         self.corner_counts = {}
+        self.corner_congested_state_by_node = {}
+        self.corner_group_counts = {}
+        self.green_group_by_node = {}
+        self.green_timer_by_node = {}
         shared = SharedParams(self.in_dest_d, self.vision, self.dt)
         self.agent_params_by_trait, self.pair_params_table = build_sfm_params(
             self.human_var,
@@ -589,6 +593,8 @@ class MoveAgent(mesa.Model):
 
     def update_corner_counts(self):
         counts = {}
+        group_counts = {}
+        phase_enabled = bool(getattr(self.config, "phase2_enabled", True))
         for agent in list(self.schedule.agents):
             if not isinstance(agent, Human):
                 continue
@@ -602,7 +608,89 @@ class MoveAgent(mesa.Model):
                 continue
             cur_node_id = agent.route[agent.route_idx]
             counts[cur_node_id] = counts.get(cur_node_id, 0) + 1
+            if phase_enabled:
+                group = self._phase_group_for_agent(agent, cur_node_id)
+                if group is not None:
+                    node_counts = group_counts.setdefault(cur_node_id, {"V": 0, "H": 0})
+                    node_counts[group] += 1
         self.corner_counts = counts
+        self.corner_group_counts = group_counts
+        self._update_corner_congested_states(counts)
+        if phase_enabled:
+            self._update_green_groups(group_counts)
+
+    def _phase_group_for_agent(self, agent, cur_node_id):
+        if len(agent.route) <= agent.route_idx + 1:
+            return None
+        next_node_id = agent.route[agent.route_idx + 1]
+        if next_node_id is None:
+            return None
+        cur_pos = self.dests[cur_node_id]
+        next_pos = self.dests[next_node_id]
+        dir_out = axis_dir(cur_pos, next_pos)
+        if abs(dir_out[1]) > 0.0:
+            return "V"
+        if abs(dir_out[0]) > 0.0:
+            return "H"
+        return None
+
+    def _update_corner_congested_states(self, counts):
+        target_params = self.get_target_params()
+        nodes = set(counts.keys()) | set(self.corner_congested_state_by_node.keys())
+        updated = {}
+        for node_id in nodes:
+            count = counts.get(node_id, 0)
+            congested = self.corner_congested_state_by_node.get(node_id, False)
+            if congested:
+                if count <= target_params.congestion_off:
+                    congested = False
+            else:
+                if count >= target_params.congestion_on:
+                    congested = True
+            updated[node_id] = congested
+        self.corner_congested_state_by_node = updated
+        return None
+
+    def _update_green_groups(self, group_counts):
+        min_green_steps = int(getattr(self.config, "min_green_steps", 5))
+        phase_switch_margin = int(getattr(self.config, "phase_switch_margin", 1))
+        phase_only_when_congested = bool(getattr(self.config, "phase_only_when_congested", True))
+        nodes = set(group_counts.keys()) | set(self.green_group_by_node.keys())
+        for node_id in nodes:
+            if phase_only_when_congested and not self.corner_congested_state_by_node.get(node_id, False):
+                continue
+            counts = group_counts.get(node_id, {"V": 0, "H": 0})
+            count_v = counts.get("V", 0)
+            count_h = counts.get("H", 0)
+            current = self.green_group_by_node.get(node_id)
+            timer = self.green_timer_by_node.get(node_id, 0)
+            if count_v > count_h:
+                candidate = "V"
+            elif count_h > count_v:
+                candidate = "H"
+            else:
+                candidate = current
+            if current is None:
+                self.green_group_by_node[node_id] = candidate
+                self.green_timer_by_node[node_id] = 0
+                continue
+            if timer < min_green_steps:
+                self.green_group_by_node[node_id] = current
+                self.green_timer_by_node[node_id] = timer + 1
+                continue
+            if candidate is None or candidate == current:
+                self.green_group_by_node[node_id] = current
+                self.green_timer_by_node[node_id] = timer + 1
+                continue
+            count_current = count_v if current == "V" else count_h
+            count_candidate = count_v if candidate == "V" else count_h
+            if count_candidate >= count_current + phase_switch_margin:
+                self.green_group_by_node[node_id] = candidate
+                self.green_timer_by_node[node_id] = 0
+            else:
+                self.green_group_by_node[node_id] = current
+                self.green_timer_by_node[node_id] = timer + 1
+        return None
 
     def all_agent_evacuate(self):
         return len(self.schedule.agents) == 0

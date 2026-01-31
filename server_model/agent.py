@@ -428,6 +428,46 @@ class Human(mesa.Agent):
         self.speed_scale = (1.0 - target_params.speed_alpha) * self.speed_scale + target_params.speed_alpha * target
         return None
 
+    def _phase_group_for_node(self, cur_node_id):
+        if len(self.route) <= self.route_idx + 1:
+            return None
+        next_node_id = self.route[self.route_idx + 1]
+        if next_node_id is None:
+            return None
+        cur_pos = self.model.dests[cur_node_id]
+        next_pos = self.model.dests[next_node_id]
+        dir_out = axis_dir(cur_pos, next_pos)
+        if abs(dir_out[1]) > 0.0:
+            return "V"
+        if abs(dir_out[0]) > 0.0:
+            return "H"
+        return None
+
+    def _phase_wait_speed(self):
+        config = getattr(self.model, "config", None)
+        if config is None or not getattr(config, "phase2_enabled", True):
+            return None
+        detail = self._get_turn_detail(self.route_idx)
+        if detail is None:
+            return None
+        _, cur, _, _, _, _, _, _ = detail
+        cur_node_id = self.route[self.route_idx]
+        target_params = self._target_params()
+        half_width = self._half_width_at(cur)
+        in_corner = is_in_corner_area(self.pos, cur, half_width, target_params.corner_margin)
+        if not in_corner:
+            return None
+        if getattr(config, "phase_only_when_congested", True):
+            if not self.model.corner_congested_state_by_node.get(cur_node_id, False):
+                return None
+        green = self.model.green_group_by_node.get(cur_node_id)
+        if green is None:
+            return None
+        my_group = self._phase_group_for_node(cur_node_id)
+        if my_group is None or my_group == green:
+            return None
+        return float(getattr(config, "wait_speed", 0.0))
+
     def set_up_initial_route(self):
         self.route, self.dest = self.model.select_first_subgoal(self)
         self.route_idx = 0
@@ -672,6 +712,9 @@ class Human(mesa.Agent):
 
     def force_from_goal(self, theta):
         v0_eff = self.hspecs.v0 * self.speed_scale
+        wait_speed = self._phase_wait_speed()
+        if wait_speed is not None:
+            v0_eff = wait_speed
         fx = self.hspecs.m * (v0_eff * theta[0] - self.velocity[0]) / self.hspecs.tau
         fy = self.hspecs.m * (v0_eff * theta[1] - self.velocity[1]) / self.hspecs.tau
         return fx, fy

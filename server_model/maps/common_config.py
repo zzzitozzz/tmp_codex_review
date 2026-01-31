@@ -53,6 +53,11 @@ class MapConfig:
     edges: dict = field(default_factory=dict)
     dead_edges: list = field(default_factory=list)
     goal_arr: list = field(default_factory=list)
+    phase2_enabled: bool = True
+    min_green_steps: int = 5
+    wait_speed: float = 0.0
+    phase_switch_margin: int = 1
+    phase_only_when_congested: bool = True
 
     def get_road_width(self, pos) -> float:
         for region in self.road_width_regions:
