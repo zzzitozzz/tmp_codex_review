@@ -4,7 +4,7 @@ import sys
 import warnings
 import copy
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -31,6 +31,12 @@ class Rect:
         return self.x_min <= x <= self.x_max and self.y_min <= y <= self.y_max
 
 
+@dataclass
+class Beacon:
+    pos: np.ndarray
+    known_dead_edges: set = field(default_factory=set)
+
+
 class MoveAgent(mesa.Model):
 
     def __init__(
@@ -48,6 +54,12 @@ class MoveAgent(mesa.Model):
             R_short=6.0,
             share_block_info=False,
             R_face=1.5,
+            beacon_enabled=False,
+            route_advice=False,
+            beacon_long_range=100.0,
+            beacon_short_range=6.0,
+            beacon_share_sec=20.0,
+            face_advice=False,
             forceful_preset="baseline",
             strategy: StrategyConfig | None = None,
             goals=None,
@@ -61,6 +73,14 @@ class MoveAgent(mesa.Model):
         self.goal_arr = goal_arr
         self.goals = goals or {}
         self.config = config
+        self.node_half_size = getattr(config, "node_half_size", 3.0) if config is not None else 3.0
+        self.alpha = getattr(config, "alpha", 0.0) if config is not None else 0.0
+        self.beta = getattr(config, "beta", 0.0) if config is not None else 0.0
+        link_regions = getattr(config, "link_regions", None) if config is not None else None
+        self.link_regions = list(link_regions) if link_regions is not None else []
+        self.link_region_map = {
+            tuple(sorted(edge)): rect for edge, rect in self.link_regions
+        }
         self.v_arg = v_arg
         self.wall_arr = wall_arr
         self.dead_wall_arr = np.array([[]]) if dead_wall_arr is None else dead_wall_arr
@@ -93,8 +113,16 @@ class MoveAgent(mesa.Model):
         self.R_short = float(R_short)
         self.share_block_info = bool(share_block_info)
         self.R_face = float(R_face)
+        self.beacon_enabled = bool(beacon_enabled)
+        self.route_advice = bool(route_advice)
+        self.beacon_long_range = float(beacon_long_range)
+        self.beacon_short_range = float(beacon_short_range)
+        self.beacon_share_sec = float(beacon_share_sec)
+        self.face_advice = bool(face_advice)
         self.share_every_steps = max(
             1, int(math.ceil(self.share_interval_sec / self.dt)))
+        self.beacon_share_every_steps = max(
+            1, int(math.ceil(self.beacon_share_sec / self.dt)))
         self.forceful_preset = forceful_preset
         self.strategy = strategy or StrategyConfig()
         self.max_steps = 1500
@@ -108,8 +136,15 @@ class MoveAgent(mesa.Model):
             (self.log_capacity, self.num_agents), dtype=np.int8)
         self.known_blocks_log = np.zeros(
             (self.log_capacity, self.num_agents), dtype=np.int16)
+        self.advice_version_log = np.full(
+            (self.log_capacity, self.num_agents), -1, dtype=np.int16)
+        self.has_advice_log = np.zeros(
+            (self.log_capacity, self.num_agents), dtype=np.int8)
         self.goal_reached_step = np.full(self.num_agents, -1, dtype=np.int32)
         self.corner_counts = {}
+        self.advice_version = -1
+        self.next_hop_advice = {}
+        self.beacons = []
         shared = SharedParams(self.in_dest_d, self.vision, self.dt)
         self.agent_params_by_trait, self.pair_params_table = build_sfm_params(
             self.human_var,
@@ -129,6 +164,7 @@ class MoveAgent(mesa.Model):
         self.schedule = mesa.time.SimultaneousActivation(self)
         self.space = mesa.space.ContinuousSpace(width, height, True)
         self.rng = np.random.default_rng(self.seed)
+        self._init_beacons()
         self.make_agents(shared)
         self.log_initial_state()
         self.running = True
@@ -180,6 +216,13 @@ class MoveAgent(mesa.Model):
                 "R_short": self.R_short,
                 "share_block_info": self.share_block_info,
                 "R_face": self.R_face,
+                "beacon_enabled": self.beacon_enabled,
+                "route_advice": self.route_advice,
+                "face_advice": self.face_advice,
+                "beacon_long_range": self.beacon_long_range,
+                "beacon_short_range": self.beacon_short_range,
+                "beacon_share_sec": self.beacon_share_sec,
+                "beacon_share_every_steps": self.beacon_share_every_steps,
                 "forceful_preset": self.forceful_preset,
                 "strategy": self.strategy.to_dict(),
                 "agent_params": {
@@ -199,6 +242,15 @@ class MoveAgent(mesa.Model):
             df = pd.DataFrame(
                 columns=["m", "nol_pop", "seed", "id", "evacuation_time"])
             df.to_csv(f"{tmp_path}/forceful_time.csv", index=False)
+
+    def _init_beacons(self):
+        self.beacons = []
+        if not self.beacon_enabled:
+            return None
+        positions = getattr(self.config, "beacon_positions", []) if self.config is not None else []
+        for pos in positions:
+            self.beacons.append(Beacon(pos=np.array(pos, dtype=float)))
+        return None
 
     def make_agents(self, shared):
         tmp_id = 0
@@ -348,6 +400,122 @@ class MoveAgent(mesa.Model):
                     heapq.heappush(pq, (new_cost, v))
 
         return dist, next_to_goal
+
+    def _dijkstra_with_density(self, goal_idx, blocked_nodes, node_counts, link_counts):
+        N = len(self.dests)
+        INF = 10**15
+        blocked = set(blocked_nodes) if blocked_nodes is not None else set()
+        dist = [INF] * N
+        next_to_goal = [-1] * N
+
+        if goal_idx in blocked:
+            return dist, next_to_goal
+
+        dist[goal_idx] = 0.0
+        pq = [(0.0, goal_idx)]
+        while pq:
+            cost, u = heapq.heappop(pq)
+            if cost > dist[u]:
+                continue
+            if u in blocked:
+                continue
+            for v in self.edges[u]:
+                if v in blocked:
+                    continue
+                edge_key = tuple(sorted((u, v)))
+                rho_link = link_counts.get(edge_key, 0)
+                length = self.dist(self.dests[u], self.dests[v])
+                edge_cost = length + self.alpha * rho_link * length
+                node_penalty = self.beta * node_counts[v]
+                new_cost = cost + edge_cost + node_penalty
+                if (new_cost < dist[v] or
+                        (math.isclose(new_cost, dist[v]) and
+                         (next_to_goal[v] == -1 or u < next_to_goal[v]))):
+                    dist[v] = new_cost
+                    next_to_goal[v] = u
+                    heapq.heappush(pq, (new_cost, v))
+        return dist, next_to_goal
+
+    def _count_phone_densities(self):
+        node_counts = [0 for _ in self.dests]
+        link_counts = {tuple(sorted(edge)): 0 for edge, _ in self.link_regions}
+        phone_agents = [
+            agent for agent in self.schedule.agents
+            if isinstance(agent, Human) and agent.has_phone
+        ]
+        if not phone_agents:
+            return node_counts, link_counts
+        half = float(self.node_half_size)
+        for agent in phone_agents:
+            pos = agent.pos
+            for idx, node in enumerate(self.dests):
+                if abs(float(pos[0]) - node[0]) <= half and abs(float(pos[1]) - node[1]) <= half:
+                    node_counts[idx] += 1
+                    break
+            for edge, rect in self.link_regions:
+                if rect.contains(pos):
+                    link_counts[tuple(sorted(edge))] += 1
+                    break
+        return node_counts, link_counts
+
+    def _collect_beacon_dead_edges(self):
+        blocked = set(self.dead_edges)
+        for beacon in self.beacons:
+            blocked.update(beacon.known_dead_edges)
+        return blocked
+
+    def _recompute_route_advice(self):
+        if not self.route_advice:
+            return None
+        node_counts, link_counts = self._count_phone_densities()
+        blocked = self._collect_beacon_dead_edges()
+        _, next_to_goal = self._dijkstra_with_density(
+            self.goal_arr[0], blocked, node_counts, link_counts)
+        self.next_hop_advice = {
+            idx: hop for idx, hop in enumerate(next_to_goal) if hop != -1
+        }
+        self.advice_version += 1
+        return None
+
+    def _current_node_for_agent(self, agent):
+        if hasattr(agent, "route") and agent.route:
+            idx = getattr(agent, "route_idx", 0)
+            if 0 <= idx < len(agent.route):
+                return agent.route[idx]
+        closest = None
+        best = float("inf")
+        for idx, node in enumerate(self.dests):
+            dist = self.space.get_distance(agent.pos, node)
+            if dist < best:
+                best = dist
+                closest = idx
+        return closest
+
+    def _build_route_from_next_hop(self, start_idx):
+        if start_idx is None or start_idx < 0:
+            return None
+        if start_idx != self.goal_arr[0] and start_idx not in self.next_hop_advice:
+            return None
+        route = []
+        cur = start_idx
+        visited = set()
+        for _ in range(len(self.dests) + 1):
+            if cur in visited:
+                break
+            visited.add(cur)
+            route.append(cur)
+            next_node = self.next_hop_advice.get(cur, -1)
+            if next_node == -1:
+                break
+            cur = next_node
+        return route if route else None
+
+    def _apply_route_advice_to_agent(self, agent):
+        if not self.route_advice or self.advice_version < 0:
+            return False
+        start_idx = self._current_node_for_agent(agent)
+        route = self._build_route_from_next_hop(start_idx)
+        return agent.queue_route_advice(route, self.advice_version)
 
     def get_path(self, start_idx, prev):
         path = []
@@ -518,6 +686,7 @@ class MoveAgent(mesa.Model):
         self.log_positions(step_idx=0)
         self.log_states(step_idx=0)
         self.log_block_info(step_idx=0)
+        self.log_advice_info(step_idx=0)
 
     def log_positions(self, step_idx=None):
         idx = self.time_step if step_idx is None else step_idx
@@ -554,6 +723,18 @@ class MoveAgent(mesa.Model):
             self.known_blocks_log[idx, agent.unique_id] = len(agent.known_dead_edges)
         return None
 
+    def log_advice_info(self, step_idx=None):
+        idx = self.time_step if step_idx is None else step_idx
+        if not (0 <= idx < self.log_capacity):
+            return None
+        for agent in self.all_agents:
+            if not self._should_log_agent(agent, idx):
+                continue
+            version = int(getattr(agent, "last_advice_version", -1))
+            self.advice_version_log[idx, agent.unique_id] = version
+            self.has_advice_log[idx, agent.unique_id] = 1 if version >= 0 else 0
+        return None
+
     def mark_goal_reached(self, agent, step_idx=None):
         idx = self.time_step + 1 if step_idx is None else step_idx
         idx = min(idx, self.log_capacity - 1)
@@ -564,6 +745,9 @@ class MoveAgent(mesa.Model):
             self.state_log[idx, agent.unique_id] = int(agent.block_info_state)
             self.has_block_info_log[idx, agent.unique_id] = 1 if agent.known_dead_edges else 0
             self.known_blocks_log[idx, agent.unique_id] = len(agent.known_dead_edges)
+            version = int(getattr(agent, "last_advice_version", -1))
+            self.advice_version_log[idx, agent.unique_id] = version
+            self.has_advice_log[idx, agent.unique_id] = 1 if version >= 0 else 0
 
 
 
@@ -571,13 +755,13 @@ class MoveAgent(mesa.Model):
         self.update_corner_counts()
         # Phase 1: 行動
         self.schedule.step()
-        if self.time_step % self.share_every_steps == 0:
-            self.communication_step()
+        self.communication_step()
         next_step_idx = self.time_step + 1
         if self.csv_plot:
             self.log_positions(step_idx=next_step_idx) #各避難者の位置情報を保存
             self.log_states(step_idx=next_step_idx)
             self.log_block_info(step_idx=next_step_idx)
+            self.log_advice_info(step_idx=next_step_idx)
 
         self.time_step = next_step_idx
         if self.time_step % 100 == 0:
@@ -663,6 +847,8 @@ class MoveAgent(mesa.Model):
             has_phone = 1 if agent.has_phone else 0
             has_block = self.has_block_info_log[:valid_len, agent.unique_id]
             known_blocks = self.known_blocks_log[:valid_len, agent.unique_id]
+            advice_versions = self.advice_version_log[:valid_len, agent.unique_id]
+            has_advice = self.has_advice_log[:valid_len, agent.unique_id]
             phone_col = np.full(valid_len, has_phone, dtype=np.int8)
             data = np.column_stack([
                 pos[:valid_len],
@@ -670,6 +856,8 @@ class MoveAgent(mesa.Model):
                 phone_col,
                 has_block,
                 known_blocks,
+                advice_versions,
+                has_advice,
             ])
             np.savetxt(
                 os.path.join(out_dir, f"id{agent.unique_id}_normal.csv"),
@@ -679,18 +867,25 @@ class MoveAgent(mesa.Model):
         return None
 
     def communication_step(self):
-        if self.phone_ratio > 0.0:
-            phone_agents = [
-                agent for agent in self.schedule.agents
-                if isinstance(agent, Human) and agent.has_phone
-            ]
-            self._share_block_info_within_agents(phone_agents, self.R_short)
-        if self.share_block_info:
-            all_agents = [
-                agent for agent in self.schedule.agents
-                if isinstance(agent, Human)
-            ]
-            self._share_block_info_within_agents(all_agents, self.R_face)
+        if self.beacon_enabled and self.beacons:
+            if self.time_step % self.beacon_share_every_steps == 0:
+                self._beacon_long_range_exchange()
+            self._beacon_short_range_share()
+        if self.time_step % self.share_every_steps == 0:
+            if self.phone_ratio > 0.0:
+                phone_agents = [
+                    agent for agent in self.schedule.agents
+                    if isinstance(agent, Human) and agent.has_phone
+                ]
+                self._share_block_info_within_agents(phone_agents, self.R_short)
+            if self.share_block_info:
+                all_agents = [
+                    agent for agent in self.schedule.agents
+                    if isinstance(agent, Human)
+                ]
+                self._share_block_info_within_agents(all_agents, self.R_face)
+                if self.face_advice and self.route_advice:
+                    self._share_route_advice_within_agents(all_agents, self.R_face)
         return None
 
     def _share_block_info_within_agents(self, agents, radius):
@@ -722,6 +917,70 @@ class MoveAgent(mesa.Model):
                 continue
             for member in component:
                 member.apply_shared_block_info(union_info)
+        return None
+
+    def _beacon_long_range_exchange(self):
+        if not self.beacons:
+            return None
+        union_info = set()
+        for beacon in self.beacons:
+            union_info.update(beacon.known_dead_edges)
+        for beacon in self.beacons:
+            beacon.known_dead_edges.update(union_info)
+        self._recompute_route_advice()
+        return None
+
+    def _beacon_short_range_share(self):
+        if not self.beacons:
+            return None
+        phone_agents = [
+            agent for agent in self.schedule.agents
+            if isinstance(agent, Human) and agent.has_phone
+        ]
+        if not phone_agents:
+            return None
+        for beacon in self.beacons:
+            for agent in phone_agents:
+                if self.space.get_distance(beacon.pos, agent.pos) > self.beacon_short_range:
+                    continue
+                if agent.known_dead_edges:
+                    beacon.known_dead_edges.update(agent.known_dead_edges)
+                if beacon.known_dead_edges:
+                    agent.apply_shared_block_info(beacon.known_dead_edges)
+                if self.route_advice:
+                    self._apply_route_advice_to_agent(agent)
+        return None
+
+    def _share_route_advice_within_agents(self, agents, radius):
+        if not agents or not self.route_advice or self.advice_version < 0:
+            return None
+        agent_set = set(agents)
+        visited = set()
+        for agent in agents:
+            if agent in visited:
+                continue
+            component = []
+            stack = [agent]
+            visited.add(agent)
+            while stack:
+                current = stack.pop()
+                component.append(current)
+                neighbors = self.space.get_neighbors(
+                    current.pos, radius, False)
+                for neighbor in neighbors:
+                    if neighbor in agent_set and neighbor not in visited:
+                        visited.add(neighbor)
+                        stack.append(neighbor)
+            if len(component) <= 1:
+                continue
+            has_advice_source = any(
+                member.has_phone and member.last_advice_version == self.advice_version
+                for member in component
+            )
+            if not has_advice_source:
+                continue
+            for member in component:
+                self._apply_route_advice_to_agent(member)
         return None
 
     def get_dead_edge_id(self, dead_wall_index):

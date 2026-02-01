@@ -53,6 +53,11 @@ class MapConfig:
     edges: dict = field(default_factory=dict)
     dead_edges: list = field(default_factory=list)
     goal_arr: list = field(default_factory=list)
+    beacon_positions: list = field(default_factory=list)
+    link_regions: Iterable[tuple] = field(default_factory=tuple)
+    node_half_size: float = 3.0
+    alpha: float = 0.0
+    beta: float = 0.0
 
     def get_road_width(self, pos) -> float:
         for region in self.road_width_regions:
