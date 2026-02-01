@@ -280,10 +280,10 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("pop_num", type=int, help="通常の人数")
-    parser.add_argument("f_tau", type=float, help="変更する変数の値")
     parser.add_argument("tmp_seed", type=int, help="seed値")
     parser.add_argument("--m", type=float, default=80.0, help="通常避難者の質量")
     parser.add_argument("--f_m", type=float, help="強引避難者の質量")
+    parser.add_argument("--f_tau", type=float, help="強引避難者のtau (未指定なら--tau)")
     parser.add_argument("--tau", type=float, default=0.5, help="通常避難者のtau")
     parser.add_argument("--k", type=float, default=120000.0, help="通常避難者のk")
     parser.add_argument("--kappa", type=float, default=240000.0, help="通常避難者のkappa")
@@ -317,7 +317,7 @@ if __name__ == '__main__':
     apply_strategy_shorthand(args)
 
     pop_num = args.pop_num  # 通常の人数
-    f_tau = args.f_tau  # 変更する変数の値
+    f_tau = args.f_tau if args.f_tau is not None else args.tau
     tmp_seed = args.tmp_seed  # seed値
     share_block_info = args.share_block_info
     beacon_enabled = args.beacon
