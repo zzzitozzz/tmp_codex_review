@@ -27,6 +27,36 @@ TARGET_PARAMS = TargetParams(
     speed_alpha=0.2,
 )
 
+BEACON_POSITIONS = [
+    [91.0, 9.0],
+    [91.0, 37.0],
+    [91.0, 93.0],
+]
+
+NODE_HALF_SIZE = 3.0
+ALPHA = 0.2
+BETA = 1.0
+
+LINK_REGIONS = [
+    ((0, 1), Rect(8.0, 48.0, 2.0, 8.0)),
+    ((1, 2), Rect(54.0, 84.0, 2.0, 8.0)),
+    ((2, 3), Rect(90.0, 150.0, 2.0, 8.0)),
+    ((0, 4), Rect(2.0, 8.0, 8.0, 38.0)),
+    ((1, 5), Rect(48.0, 54.0, 8.0, 38.0)),
+    ((2, 6), Rect(84.0, 90.0, 8.0, 38.0)),
+    ((3, 7), Rect(150.0, 156.0, 8.0, 38.0)),
+    ((4, 5), Rect(8.0, 48.0, 38.0, 44.0)),
+    ((5, 6), Rect(54.0, 84.0, 38.0, 44.0)),
+    ((6, 7), Rect(90.0, 150.0, 38.0, 44.0)),
+    ((4, 8), Rect(2.0, 8.0, 44.0, 94.0)),
+    ((5, 9), Rect(48.0, 54.0, 44.0, 94.0)),
+    ((6, 10), Rect(84.0, 90.0, 44.0, 94.0)),
+    ((7, 11), Rect(150.0, 156.0, 44.0, 94.0)),
+    ((8, 9), Rect(8.0, 48.0, 94.0, 100.0)),
+    ((9, 10), Rect(54.0, 84.0, 94.0, 100.0)),
+    ((10, 11), Rect(90.0, 150.0, 94.0, 100.0)),
+]
+
 INTERSECTION_MAP_CONFIG = MapConfig(
     goals=GOALS,
     spawn=SPAWN,
@@ -58,4 +88,9 @@ INTERSECTION_MAP_CONFIG = MapConfig(
            12: [6, 7]},
     dead_edges=[12],
     goal_arr=[7, 7],
+    beacon_positions=BEACON_POSITIONS,
+    link_regions=LINK_REGIONS,
+    node_half_size=NODE_HALF_SIZE,
+    alpha=ALPHA,
+    beta=BETA,
 )

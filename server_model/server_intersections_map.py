@@ -211,7 +211,10 @@ def apply_strategy_shorthand(args):
 def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_arr, pop_num, for_pop, dests, edges, dead_edges,
                             goal_arr, goals, tmp_seed,len_sq, f_r, f_tau, pos_func, csv_plot,
                             share_block_info=False, forceful_preset="baseline", strategy=None, config=None,
-                            phone_ratio=0.0, share_interval_sec=0.3, R_short=6.0, R_face=1.5):
+                            phone_ratio=0.0, share_interval_sec=0.3, R_short=6.0, R_face=1.5,
+                            beacon_enabled=False, route_advice=False,
+                            beacon_long_range=100.0, beacon_short_range=6.0, beacon_share_sec=20.0,
+                            face_advice=False):
     ex_num = 1 # force_tau
     # if csv_plot:
     #     file_name_array = [
@@ -260,6 +263,12 @@ def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_a
         R_short=R_short,
         share_block_info=share_block_info,
         R_face=R_face,
+        beacon_enabled=beacon_enabled,
+        route_advice=route_advice,
+        beacon_long_range=beacon_long_range,
+        beacon_short_range=beacon_short_range,
+        beacon_share_sec=beacon_share_sec,
+        face_advice=face_advice,
         forceful_preset=forceful_preset,
         strategy=strategy,
         config=config)
@@ -295,6 +304,11 @@ if __name__ == '__main__':
     parser.add_argument("--share_interval_sec", type=float, default=0.3, help="端末間共有の周期[秒]")
     parser.add_argument("--R_short", type=float, default=6.0, help="端末間通信距離[m]")
     parser.add_argument("--R_face", type=float, default=1.5, help="対面共有の距離[m]")
+    parser.add_argument("--beacon", action="store_true", help="固定中継ノードを有効化する")
+    parser.add_argument("--route_advice", action="store_true", help="固定中継ノードによる推奨経路を有効化する")
+    parser.add_argument("--beacon_long_range", type=float, default=100.0, help="beacon間の長距離通信距離[m]")
+    parser.add_argument("--beacon_short_range", type=float, default=6.0, help="beaconと端末の短距離通信距離[m]")
+    parser.add_argument("--beacon_share_sec", type=float, default=20.0, help="beacon間共有の周期[秒]")
     parser.add_argument("--forceful_preset", default="baseline",
                         choices=["baseline", "goal_strong", "ff_weak", "asym_fn", "combo"],
                         help="SFM係数プリセット")
@@ -306,6 +320,9 @@ if __name__ == '__main__':
     f_tau = args.f_tau  # 変更する変数の値
     tmp_seed = args.tmp_seed  # seed値
     share_block_info = args.share_block_info
+    beacon_enabled = args.beacon
+    route_advice = args.route_advice
+    face_advice = bool(route_advice and beacon_enabled and share_block_info and args.phone_ratio > 0.0)
     f_r = 0.5 # 強引な避難者の大きさ
     for_pop = 0  # 強引な避難者の人数 #tmp
     csv_plot = True  # csvファイル(各エージェントの動きの軌跡)を出力するかどうか
@@ -318,6 +335,22 @@ if __name__ == '__main__':
     wall_arr = config.wall_arr
     dead_wall_arr = config.dead_wall_arr
 
+    if not beacon_enabled and not share_block_info and args.phone_ratio <= 0.0:
+        mode_desc = "Mode1: 情報配信なし"
+    elif share_block_info and not beacon_enabled and args.phone_ratio <= 0.0:
+        mode_desc = "Mode2: 対面のみで不通道路情報共有"
+    elif beacon_enabled and args.phone_ratio > 0.0 and not share_block_info and not route_advice:
+        mode_desc = "Mode3: 端末+beaconで不通道路共有 (対面なし, 推奨なし)"
+    elif beacon_enabled and args.phone_ratio > 0.0 and share_block_info and not route_advice:
+        mode_desc = "Mode4: 端末+対面+beaconで不通道路共有 (推奨なし)"
+    elif beacon_enabled and args.phone_ratio > 0.0 and share_block_info and route_advice:
+        mode_desc = "Mode5: Mode4 + 推奨経路 (対面での推奨共有あり)"
+    else:
+        mode_desc = ("Custom: share_block_info="
+                     f"{share_block_info}, phone_ratio={args.phone_ratio}, "
+                     f"beacon={beacon_enabled}, route_advice={route_advice}")
+    print(f"[experiment_mode] {mode_desc}")
+
     dests = config.dests
     edges = config.edges
     dead_edges = config.dead_edges
@@ -329,7 +362,13 @@ if __name__ == '__main__':
             goal_arr, goals, tmp_seed, len_sq, f_r, f_tau, pos_func, csv_plot,
             share_block_info=share_block_info, forceful_preset=args.forceful_preset, strategy=strategy, config=config,
             phone_ratio=args.phone_ratio, share_interval_sec=args.share_interval_sec, R_short=args.R_short,
-            R_face=args.R_face)
+            R_face=args.R_face,
+            beacon_enabled=beacon_enabled,
+            route_advice=route_advice,
+            beacon_long_range=args.beacon_long_range,
+            beacon_short_range=args.beacon_short_range,
+            beacon_share_sec=args.beacon_share_sec,
+            face_advice=face_advice)
         m.running = True
         while m.running:
             m.step()

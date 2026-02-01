@@ -204,6 +204,8 @@ class Human(mesa.Agent):
         self.congested_state = False
         self.has_phone = bool(has_phone)
         self.known_dead_edges = set()
+        self.last_advice_version = -1
+        self.pending_route = None
         ######################
 
     @property
@@ -437,6 +439,14 @@ class Human(mesa.Agent):
         return None
     
     def step(self):  # 次の位置を特定するための計算式を書く
+        if self.pending_route is not None:
+            self.route = self.pending_route
+            self.dest = self.route[0]
+            self.route_idx = 0
+            self.init_pos = self.pos.copy()
+            self._dir_in0 = None
+            self.update_target_pos_from_route()
+            self.pending_route = None
         if self._needs_reroute_from_share:
             self.route, self.dest = self.model.select_first_subgoal(self)
             self.route_idx = 0
@@ -460,6 +470,15 @@ class Human(mesa.Agent):
             self.velocity[0] * self._shared.dt  # 仮の位置を計算
         self.tmp_pos[1] = self.pos[1] + self.velocity[1] * self._shared.dt
         return None
+
+    def queue_route_advice(self, route, advice_version):
+        if route is None:
+            return False
+        if advice_version == self.last_advice_version:
+            return False
+        self.pending_route = route
+        self.last_advice_version = advice_version
+        return True
 
     def advance(self):
         self.pos = copy.deepcopy(self.tmp_pos)
