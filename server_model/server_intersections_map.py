@@ -222,10 +222,18 @@ def make_new_model_instance(human_var, forceful_human_var, wall_arr, dead_wall_a
     # else:
     #     file_name_array = [
     #         f"/local_home/keito/simple_convex_map/agst_dir/goal_up_forceful_tau/ex{ex_num}_for_{for_pop}_len_{int(len_sq)}/tau_{int(f_tau*100)}/"]
-    if csv_plot:
-        file_name_array = [f"./tmp_data/intersection_map/tau_{int(f_tau*100)}/"]
+
+    if csv_plot and share_block_info and beacon_enabled and route_advice:
+        file_name_array = [f"./tmp_data/intersection_map/mode5/phone_ratio_{phone_ratio}/"]
+    elif csv_plot and share_block_info and beacon_enabled and not route_advice:
+        file_name_array = [f"./tmp_data/intersection_map/mode4/phone_ratio_{phone_ratio}/"]
     else:
-        file_name_array = [f"./tmp_data/intersection_map/tau_{int(f_tau*100)}/"]
+        file_name_array = [f"./tmp_data/intersection_map/mode1/phone_ratio_{phone_ratio}/"]
+
+    # if csv_plot:
+    #     file_name_array = [f"./tmp_data/intersection_map/tau_{int(f_tau*100)}/"]
+    # else:
+    #     file_name_array = [f"./tmp_data/intersection_map/tau_{int(f_tau*100)}/"]
 
     m = MoveAgent(
         population=pop_num,
